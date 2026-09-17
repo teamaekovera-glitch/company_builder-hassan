@@ -387,6 +387,8 @@ export const STAGE_NODES: StageNode[] = [
     wave: 4,
     kind: "stage",
     deps: [],
+    // Keyword clusters and landing briefs are produced inside the loop calls
+    // (spec marks stage 16 "—"); depth scales their volume, not call count.
     expansions: [],
   },
   {
@@ -405,6 +407,8 @@ export const STAGE_NODES: StageNode[] = [
     wave: 4,
     kind: "stage",
     deps: [],
+    // Objection handlers, cold and LinkedIn sequences are inside the loop
+    // calls (spec marks stage 18 "—"); depth scales volume, not calls.
     expansions: [],
   },
   {
