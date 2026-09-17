@@ -1,0 +1,6 @@
+# .obvious/config.yml — repo policy for agent automation
+branches:
+  default: main          # auto-detected from GitHub repo settings
+  prefix: obvious/       # branch prefix for agent-created branches
+merge:
+  method: merge          # auto-detected: all merge methods allowed on GitHub
