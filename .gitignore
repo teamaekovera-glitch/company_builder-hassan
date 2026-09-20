@@ -20,6 +20,9 @@
 # production
 /build
 
+# run store (SQLite is the only persistence — never commit operator data)
+/.data/
+
 # misc
 .DS_Store
 *.pem
