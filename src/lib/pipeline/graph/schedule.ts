@@ -8,7 +8,7 @@
  * deterministically and offline.
  */
 
-import { STAGE_NODES, WAVES, stageNode, type StageId } from "./stages";
+import { STAGE_NODES, WAVES, stageNode, type StageId, type StageNode } from "./stages";
 
 export type StageState = "pending" | "running" | "done" | "failed" | "blocked";
 
@@ -17,10 +17,10 @@ export type RunState = Record<StageId, StageState>;
 
 const TERMINAL_STATES: readonly StageState[] = ["done", "failed", "blocked"];
 
-/** Fresh run state: every stage pending. */
-export function createRunState(): RunState {
+/** Fresh run state: every stage of `nodes` pending. */
+export function createRunState(nodes: readonly StageNode[] = STAGE_NODES): RunState {
   const state = {} as RunState;
-  for (const node of STAGE_NODES) state[node.id] = "pending";
+  for (const node of nodes) state[node.id] = "pending";
   return state;
 }
 
@@ -34,9 +34,17 @@ export function stagesInWave(waveNumber: number): StageId[] {
   return WAVES[waveNumber - 1] ?? [];
 }
 
-/** A wave is closed once every node in it has reached a terminal state. */
-export function isWaveClosed(waveNumber: number, state: RunState): boolean {
-  return stagesInWave(waveNumber).every((id) => TERMINAL_STATES.includes(state[id]));
+/**
+ * A wave is closed once every node in it has reached a terminal state.
+ * With an explicit `nodes` subset, closure is evaluated over that subset
+ * only — waves absent from the subset count as vacuously closed.
+ */
+export function isWaveClosed(
+  waveNumber: number,
+  state: RunState,
+  nodes: readonly StageNode[] = STAGE_NODES,
+): boolean {
+  return nodes.every((node) => node.wave !== waveNumber || TERMINAL_STATES.includes(state[node.id]));
 }
 
 /**
@@ -44,25 +52,34 @@ export function isWaveClosed(waveNumber: number, state: RunState): boolean {
  * in order, and every node inside an open wave starts as soon as its own
  * dependencies are done.
  */
-export function isWaveOpen(waveNumber: number, state: RunState): boolean {
+export function isWaveOpen(
+  waveNumber: number,
+  state: RunState,
+  nodes: readonly StageNode[] = STAGE_NODES,
+): boolean {
   for (let earlier = 1; earlier < waveNumber; earlier++) {
-    if (!isWaveClosed(earlier, state)) return false;
+    if (!isWaveClosed(earlier, state, nodes)) return false;
   }
   return true;
 }
 
-function depsOf(id: StageId): StageId[] {
-  return stageNode(id).deps;
+/**
+ * Dependencies of `id` as declared by `nodes` — for the default full graph
+ * this is the global registry; for a subset it is the subset's own wiring,
+ * which is what lets tests exercise scheduling on a trimmed DAG.
+ */
+function depsOf(id: StageId, nodes: readonly StageNode[]): StageId[] {
+  return nodes.find((node) => node.id === id)?.deps ?? stageNode(id).deps;
 }
 
 /** All dependencies of `id` are done. */
-function depsSatisfied(id: StageId, state: RunState): boolean {
-  return depsOf(id).every((dep) => state[dep] === "done");
+function depsSatisfied(id: StageId, state: RunState, nodes: readonly StageNode[]): boolean {
+  return depsOf(id, nodes).every((dep) => state[dep] === "done");
 }
 
 /** Any dependency of `id` has failed or is blocked (so it never can run). */
-function depsUnrecoverable(id: StageId, state: RunState): boolean {
-  return depsOf(id).some((dep) => state[dep] === "failed" || state[dep] === "blocked");
+function depsUnrecoverable(id: StageId, state: RunState, nodes: readonly StageNode[]): boolean {
+  return depsOf(id, nodes).some((dep) => state[dep] === "failed" || state[dep] === "blocked");
 }
 
 /**
@@ -70,12 +87,12 @@ function depsUnrecoverable(id: StageId, state: RunState): boolean {
  * dependency done. This is the single scheduling decision the executor
  * applies — a stage runs only when all dependencies are done.
  */
-export function readyNodes(state: RunState): StageId[] {
+export function readyNodes(state: RunState, nodes: readonly StageNode[] = STAGE_NODES): StageId[] {
   const ready: StageId[] = [];
-  for (const node of STAGE_NODES) {
+  for (const node of nodes) {
     if (state[node.id] !== "pending") continue;
-    if (!isWaveOpen(node.wave, state)) continue;
-    if (!depsSatisfied(node.id, state)) continue;
+    if (!isWaveOpen(node.wave, state, nodes)) continue;
+    if (!depsSatisfied(node.id, state, nodes)) continue;
     ready.push(node.id);
   }
   return ready;
@@ -86,15 +103,15 @@ export function readyNodes(state: RunState): StageId[] {
  * themselves blocked. Returns a new state; repeatable until stable because
  * blocked dependents cascade.
  */
-export function applyBlocking(state: RunState): RunState {
+export function applyBlocking(state: RunState, nodes: readonly StageNode[] = STAGE_NODES): RunState {
   const next = { ...state };
   let changed = true;
   while (changed) {
     changed = false;
-    for (const node of STAGE_NODES) {
+    for (const node of nodes) {
       if (next[node.id] !== "pending") continue;
-      if (!isWaveOpen(node.wave, next)) continue;
-      if (depsUnrecoverable(node.id, next)) {
+      if (!isWaveOpen(node.wave, next, nodes)) continue;
+      if (depsUnrecoverable(node.id, next, nodes)) {
         next[node.id] = "blocked";
         changed = true;
       }
@@ -129,7 +146,7 @@ export function simulate(failAt: readonly StageId[] = []): SimulationResult {
       if (!isWaveOpen(wave, state)) break;
       state = applyBlocking(state);
       for (const id of stagesInWave(wave)) {
-        if (state[id] !== "pending" || !depsSatisfied(id, state)) continue;
+        if (state[id] !== "pending" || !depsSatisfied(id, state, STAGE_NODES)) continue;
         state[id] = failAt.includes(id) ? "failed" : "done";
         order.push(id);
         changed = true;
