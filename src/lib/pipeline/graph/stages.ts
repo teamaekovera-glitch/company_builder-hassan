@@ -651,5 +651,18 @@ export function stageNode(id: StageId): StageNode {
   return node;
 }
 
+/**
+ * Look up a 7-call-loop stage by id, narrowed from the node union. Consumers
+ * of the executor's loop path need the loop shape specifically; a pass-stage
+ * id here is a caller bug and fails loudly instead of leaking the union.
+ */
+export function loopStageNode(id: StageId): LoopStage {
+  const node = stageNode(id);
+  if (node.kind !== "stage") {
+    throw new Error(`Stage ${id} is a pass node, not a loop stage`);
+  }
+  return node;
+}
+
 /** Number of core (7-call-loop) stages — the localisation document set size. */
 export const LOOP_STAGE_COUNT = STAGE_NODES.filter((n) => n.kind === "stage").length;
