@@ -9,7 +9,7 @@
  * time); durable state lives in SQLite, never in the event log itself.
  */
 
-import type { RunStatus, StageStatus } from "../store/schema";
+import type { CallMetaRow, RunStatus, StageStatus, StageStatusRow } from "../store/schema";
 import type { StoreEvent } from "./evented-store";
 
 interface EventBase {
@@ -64,7 +64,6 @@ export function isTerminalRunStatus(status: RunStatus): boolean {
   return status === "completed" || status === "failed" || status === "interrupted";
 }
 
-/** Maps a persisted store mutation to its event. Pure and total. */
 export function toPublishable(event: StoreEvent): PublishableEvent {
   switch (event.type) {
     case "run":
@@ -93,4 +92,53 @@ export function toPublishable(event: StoreEvent): PublishableEvent {
         error: event.error,
       };
   }
+}
+
+/**
+ * Rebuilds a run's event history from its persisted rows — the cold-hub case
+ * (a fresh process after a restart, whose in-memory replay log is empty).
+ *
+ * The interleaving of the original broadcast is not recoverable from three
+ * flat tables, but it does not need to be: every derived figure (header
+ * totals, per-stage counters, verbatim errors, final card states) depends
+ * only on the *set* of call rows and the final stage/run states, not on the
+ * broadcast order. The synthesized order is therefore: created (queued), the
+ * call attempts in persisted order, each stage's final transition, then the
+ * run's latest status — a terminal status last, so the replay both paints
+ * the board and ends the stream exactly as the live terminal event would.
+ */
+export function synthesizeReplayEvents(
+  runId: string,
+  status: RunStatus,
+  stages: readonly StageStatusRow[],
+  calls: Iterable<CallMetaRow>,
+): PublishableEvent[] {
+  const events: PublishableEvent[] = [{ kind: "run", runId, status: "queued" }];
+  for (const call of calls) {
+    events.push({
+      kind: "call",
+      runId,
+      stageId: call.stage_id,
+      role: call.role,
+      loop: call.loop,
+      attempt: call.attempt,
+      ok: call.ok === 1,
+      inputTokens: call.input_tokens,
+      outputTokens: call.output_tokens,
+      ms: call.ms,
+      error: call.error,
+    });
+  }
+  for (const stage of stages) {
+    events.push({
+      kind: "stage",
+      runId,
+      stageId: stage.stage_id,
+      status: stage.status,
+      loop: stage.loop,
+      score: stage.score,
+    });
+  }
+  if (status !== "queued") events.push({ kind: "run", runId, status });
+  return events;
 }

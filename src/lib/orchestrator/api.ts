@@ -160,6 +160,16 @@ export function handleRunEvents(services: OrchestratorServices, runId: string, o
   const snapshot = services.orchestrator.getSnapshot(runId);
   if (!snapshot) return errorResponse(new RunNotFoundError(runId));
 
+  // Cold hub — a fresh process after a restart has an empty in-memory replay
+  // log, and a live terminal run would otherwise stream zero bytes forever.
+  // Rebuild the history from the persisted store once, before subscribing, so
+  // the normal replay path serves it (and a terminal status closes the stream).
+  if (services.hub.events(runId).length === 0) {
+    for (const event of services.orchestrator.replayEvents(runId)) {
+      services.hub.publish(runId, event);
+    }
+  }
+
   const encoder = new TextEncoder();
   const heartbeatMs = options.heartbeatMs ?? 15_000;
   let cleanup: () => void = () => {};
