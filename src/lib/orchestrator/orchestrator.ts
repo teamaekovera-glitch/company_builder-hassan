@@ -34,7 +34,7 @@ import type { PreflightEstimate, StageDetailData } from "../dashboard/types";
 import { costFromTokens, estimateRun } from "./estimate";
 import { synthesizeReplayEvents, type PublishableEvent } from "./events";
 import { buildStageDetail } from "./stage-detail";
-import { buildDossierMarkdown, buildRunLogMarkdown } from "./exports";
+import { buildDossierMarkdown, runLogSections as buildRunLogSections } from "./exports";
 
 /** Strategy angles for alternative-company runs (spec RunConfig). */
 export const STRATEGY_ANGLES = ["bootstrapped", "vc-scale", "enterprise-first"] as const;
@@ -415,9 +415,16 @@ export class Orchestrator {
     return buildDossierMarkdown(this.store, this.requireRun(runId));
   }
 
-  /** run-log.md (spec global actions) — every prompt and response verbatim. */
-  runLogMarkdown(runId: string): string {
-    return buildRunLogMarkdown(this.store, this.requireRun(runId));
+  /**
+   * run-log.md (spec global actions) — verbatim sections, lazily generated.
+   * The run row resolves eagerly (RunNotFoundError surfaces before streaming
+   * starts); sections materialize one call at a time — late-pipeline prompts
+   * thread every upstream artifact and reach megabytes each, so a materialized
+   * document can exceed the Node heap (observed: 1.2 GB of call text on a
+   * completed mock run).
+   */
+  runLogSections(runId: string): Generator<string> {
+    return buildRunLogSections(this.store, this.requireRun(runId));
   }
 
   private requireRun(runId: string): RunRow {

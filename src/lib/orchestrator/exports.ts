@@ -11,7 +11,7 @@
 import { LANGUAGE_LABELS } from "../dashboard/types";
 import { STAGE_NODES, type StageId, type StageNode } from "../pipeline/graph/stages";
 import { WINNING_ARTIFACT_KIND } from "../pipeline/executor/stage";
-import type { RunRow, StageArtifactRow, StageStatusRow } from "../store/schema";
+import type { CallRow, RunRow, StageArtifactRow, StageStatusRow } from "../store/schema";
 import type { RunStore } from "../store/store";
 
 /** Label for a kind-encoded language code; unknown codes render as themselves. */
@@ -136,46 +136,77 @@ export function buildDossierMarkdown(store: RunStore, run: RunRow): string {
 }
 
 /**
- * run-log.md — every prompt and every response, verbatim, in run order with
- * per-call metadata (stage, role, loop, attempt, tokens, ms). Failed
- * attempts quote the error verbatim; usage arrives only with the successful
- * result (T2 contract). The caller has already resolved the run row.
+ * run-log.md — header block. Pure. The call count arrives from the store's
+ * cheap COUNT aggregate so the streaming path never reads rows just to number
+ * the log.
  */
-export function buildRunLogMarkdown(store: RunStore, run: RunRow): string {
-  const calls = store.listRunCalls(run.id);
-
-  const lines: string[] = [
+export function buildRunLogHeader(run: RunRow, callCount: number): string {
+  return [
     "# Run log",
     "",
     `Run: \`${run.id}\``,
     `Idea: ${run.idea}`,
     configLine(run),
     "",
-    `${calls.length} call${calls.length === 1 ? "" : "s"}, verbatim, in run order.`,
+    `${callCount} call${callCount === 1 ? "" : "s"}, verbatim, in run order.`,
+    "",
+  ].join("\n");
+}
+
+/**
+ * run-log.md — one verbatim call section. Pure: every prompt and response,
+ * verbatim, with per-call metadata (stage, role, loop, attempt, tokens, ms).
+ * Failed attempts quote the error verbatim; usage arrives only with the
+ * successful result (T2 contract).
+ */
+export function buildRunLogCallSection(call: CallRow, index: number): string {
+  const lines = [
+    `---`,
+    "",
+    `## Call ${index + 1} — \`${call.stage_id}\` / \`${call.role}\``,
+    "",
+    `- loop: ${call.loop} · attempt: ${call.attempt}`,
+    `- tokens: ${call.input_tokens ?? "—"} in / ${call.output_tokens ?? "—"} out · ${call.ms ?? "—"} ms`,
+    "",
+    `### Prompt`,
+    "",
+    fenced(call.prompt),
     "",
   ];
-  calls.forEach((call, index) => {
-    lines.push(
-      `---`,
-      "",
-      `## Call ${index + 1} — \`${call.stage_id}\` / \`${call.role}\``,
-      "",
-      `- loop: ${call.loop} · attempt: ${call.attempt}`,
-      `- tokens: ${call.input_tokens ?? "—"} in / ${call.output_tokens ?? "—"} out · ${call.ms ?? "—"} ms`,
-      "",
-      `### Prompt`,
-      "",
-      fenced(call.prompt),
-      "",
-    );
-    if (call.error !== null && call.error !== undefined && call.error !== "") {
-      lines.push(`### Error`, "", fenced(call.error), "");
-    }
-    if (call.response !== null && call.response !== undefined && call.response !== "") {
-      lines.push(`### Response`, "", fenced(call.response), "");
-    } else if (call.error === null || call.error === "") {
-      lines.push(`### Response`, "", "> MISSING: no response and no error recorded for this attempt.", "");
-    }
-  });
-  return `${lines.join("\n").trimEnd()}\n`;
+  if (call.error !== null && call.error !== undefined && call.error !== "") {
+    lines.push(`### Error`, "", fenced(call.error), "");
+  }
+  if (call.response !== null && call.response !== undefined && call.response !== "") {
+    lines.push(`### Response`, "", fenced(call.response), "");
+  } else if (call.error === null || call.error === "") {
+    lines.push(`### Response`, "", "> MISSING: no response and no error recorded for this attempt.", "");
+  }
+  return lines.join("\n");
+}
+
+/**
+ * run-log.md as a lazy section stream: the header, then one section per call
+ * in run order. Late-pipeline prompts thread every upstream artifact and can
+ * reach megabytes each — the store cursor materializes one verbatim row at a
+ * time, so multi-gigabyte call histories never accumulate in memory. Byte
+ * equivalence with buildRunLogMarkdown holds by construction (that builder
+ * consumes this generator), keeping the golden tests authoritative for the
+ * streamed bytes too.
+ */
+export function* runLogSections(store: RunStore, run: RunRow): Generator<string> {
+  yield buildRunLogHeader(run, store.countRunCalls(run.id));
+  let index = 0;
+  for (const call of store.iterateRunCallRows(run.id)) {
+    yield buildRunLogCallSection(call, index);
+    index += 1;
+  }
+}
+
+/**
+ * run-log.md — the full document as one string. Materializes every call;
+ * test-seam convenience for small seeded stores. Production downloads stream
+ * runLogSections instead (see handleExportRunLog).
+ */
+export function buildRunLogMarkdown(store: RunStore, run: RunRow): string {
+  return `${[...runLogSections(store, run)].join("\n").trimEnd()}\n`;
 }

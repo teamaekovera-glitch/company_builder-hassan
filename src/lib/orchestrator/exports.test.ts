@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { RunStore } from "../store/store";
-import { buildDossierMarkdown, buildRunLogMarkdown } from "./exports";
+import { buildDossierMarkdown, buildRunLogMarkdown, runLogSections } from "./exports";
 
 const UPDATE_GOLDENS = process.env.UPDATE_GOLDENS === "1";
 
@@ -184,5 +184,36 @@ describe("export builders — golden files (spec row 11)", () => {
     const run = store.getRun(runId);
     if (!run) throw new Error("seed failed");
     expect(buildRunLogMarkdown(store, run)).toContain("MISSING: no response and no error recorded");
+  });
+
+  it("run-log sections stream byte-identically to the materialized document, header first", () => {
+    const runId = seedGoldenRun();
+    const run = store.getRun(runId);
+    if (!run) throw new Error("seed failed");
+
+    const generator = runLogSections(store, run);
+    const first = generator.next();
+    expect(first.done).toBe(false);
+    // Laziness contract: the header is available before any call row is read,
+    // so the download starts streaming without materializing call history.
+    expect(first.value).toMatch(/^# Run log/);
+
+    const streamed = [first.value, ...generator].join("\n").trimEnd() + "\n";
+    expect(streamed).toBe(buildRunLogMarkdown(store, run));
+  });
+
+  it("run-log sections stream byte-identically for a run with no calls", () => {
+    store.createRun({
+      id: "run-empty",
+      idea: "An idea with no recorded calls",
+      config: { depth: "light", languages: ["en"], scoreThreshold: 9.0 },
+      status: "running",
+    });
+    const run = store.getRun("run-empty");
+    if (!run) throw new Error("seed failed");
+
+    const streamed = [...runLogSections(store, run)].join("\n").trimEnd() + "\n";
+    expect(streamed).toBe(buildRunLogMarkdown(store, run));
+    expect(streamed).toContain("0 calls, verbatim, in run order.");
   });
 });

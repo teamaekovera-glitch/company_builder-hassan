@@ -175,6 +175,32 @@ function markdownDownload(markdown: string, filename: string): Response {
   });
 }
 
+/**
+ * Streaming download for exports whose documents can exceed memory: each
+ * section is encoded and enqueued once, then released. `cancel` closes the
+ * generator on client disconnect so the underlying SQLite cursor is not left
+ * to the GC.
+ */
+function streamedMarkdownDownload(sections: Generator<string>, filename: string): Response {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      const next = sections.next();
+      if (next.done) controller.close();
+      else controller.enqueue(encoder.encode(next.value));
+    },
+    cancel() {
+      sections.return(undefined);
+    },
+  });
+  return new Response(stream, {
+    headers: {
+      "content-type": "text/markdown; charset=utf-8",
+      "content-disposition": `attachment; filename="${filename}"`,
+    },
+  });
+}
+
 /** GET /api/runs/:id/export/dossier — dossier.md download (spec global actions). */
 export function handleExportDossier(services: OrchestratorServices, runId: string): Response {
   try {
@@ -187,7 +213,7 @@ export function handleExportDossier(services: OrchestratorServices, runId: strin
 /** GET /api/runs/:id/export/run-log — run-log.md download (spec global actions). */
 export function handleExportRunLog(services: OrchestratorServices, runId: string): Response {
   try {
-    return markdownDownload(services.orchestrator.runLogMarkdown(runId), "run-log.md");
+    return streamedMarkdownDownload(services.orchestrator.runLogSections(runId), "run-log.md");
   } catch (err) {
     return errorResponse(err);
   }
