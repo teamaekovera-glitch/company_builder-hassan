@@ -156,9 +156,12 @@ export function buildStageDetail(store: RunStore, runId: string, stageId: string
     });
 
   // --- translations: one entry per non-English language (latest row wins) -----
+  // Store convention (schema.ts): translated documents are kind-encoded —
+  // `translation:<lang>` on the same stage — with the language column "en".
   const byLanguage = new Map<string, StageArtifactRow>();
   for (const row of rows) {
-    if (row.language !== "en") byLanguage.set(row.language, row);
+    const match = /^translation:([a-z-]+)$/.exec(row.kind);
+    if (match) byLanguage.set(match[1], row);
   }
   const translations = [...byLanguage.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
