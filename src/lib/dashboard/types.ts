@@ -8,7 +8,8 @@ export type Language = "en" | "es" | "de" | "ja" | "hi";
 /** Stage lifecycle on the board. Mirrors the spec's consequential states. */
 export type StageStatus = "queued" | "running" | "done" | "failed" | "blocked";
 
-export type RunStatus = "empty" | "running" | "done" | "failed";
+/** Run lifecycle chip on the header — `queued` = created, awaiting confirmation. */
+export type RunStatus = "empty" | "queued" | "running" | "done" | "failed";
 
 export interface DepthOption {
   value: Depth;

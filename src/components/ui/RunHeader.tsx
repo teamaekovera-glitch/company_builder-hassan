@@ -10,6 +10,7 @@ const MAX_TOKENS_PER_SEC = 500; // gauge ceiling — 160 tok/s sits mid-gauge
 
 const STATUS_LABEL: Record<RunStatus, string> = {
   empty: "no run",
+  queued: "queued",
   running: "running",
   done: "done",
   failed: "failed",

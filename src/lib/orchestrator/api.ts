@@ -11,8 +11,10 @@
  * - POST /api/runs/:id/confirm  → explicit confirmation; starts execution
  * - GET  /api/runs/:id/events   → SSE stream (replay + live, closes on terminal)
  * - POST /api/estimate          → pre-flight estimate without creating a run
+ * - GET  /api/provider          → configured provider + key presence (never the key)
  */
 
+import { resolveProviderKind, type LLMEnvConfig, type ProviderKind } from "../llm/factory";
 import { isTerminalRunStatus, type OrchestratorEvent } from "./events";
 import { SSEHub } from "./hub";
 import {
@@ -34,7 +36,7 @@ function json(status: number, body: unknown): Response {
   return Response.json(body, { status });
 }
 
-/** Maps typed orchestrator errors onto HTTP statuses; unknown errors are 500s. */
+/** Maps typed orchestrator errors onto HTTP statuses; other errors are 500s with the verbatim message. */
 function errorResponse(err: unknown): Response {
   if (err instanceof RunValidationError) {
     return json(400, { error: err.message, fields: err.fields });
@@ -45,7 +47,10 @@ function errorResponse(err: unknown): Response {
   if (err instanceof RunNotQueuedError) {
     return json(409, { error: err.message });
   }
-  throw err;
+  // A bare rethrow would collapse into Next.js's body-less 500 — the
+  // dashboard needs the message verbatim (e.g. the missing-key error from
+  // the transport factory) to surface it to the operator.
+  return json(500, { error: err instanceof Error ? err.message : String(err) });
 }
 
 /** POST /api/estimate — pure pre-flight estimate; never touches a provider or the store. */
@@ -108,6 +113,30 @@ export function handleConfirmRun(services: OrchestratorServices, runId: string):
   }
 }
 
+/** Provider configuration the dashboard sees — never the key itself. */
+export interface ProviderInfoBody {
+  provider: ProviderKind;
+  /** False only when a real transport is configured without AI_API_KEY. */
+  hasKey: boolean;
+  /** The configured model override, or null when running on the default. */
+  model: string | null;
+}
+
+/** GET /api/provider — lets the dashboard show the missing-key banner (spec consequential state) up front. */
+export function handleProviderInfo(env: LLMEnvConfig = process.env): Response {
+  try {
+    const provider = resolveProviderKind(env);
+    const body: ProviderInfoBody = {
+      provider,
+      hasKey: provider === "mock" || Boolean(env.AI_API_KEY),
+      model: env.AI_MODEL ?? null,
+    };
+    return json(200, body);
+  } catch (err) {
+    return errorResponse(err);
+  }
+}
+
 export interface EventStreamOptions {
   /** Aborting the signal closes the stream (client disconnects). */
   signal?: AbortSignal;
@@ -130,6 +159,16 @@ function formatSSE(event: OrchestratorEvent): string {
 export function handleRunEvents(services: OrchestratorServices, runId: string, options: EventStreamOptions = {}): Response {
   const snapshot = services.orchestrator.getSnapshot(runId);
   if (!snapshot) return errorResponse(new RunNotFoundError(runId));
+
+  // Cold hub — a fresh process after a restart has an empty in-memory replay
+  // log, and a live terminal run would otherwise stream zero bytes forever.
+  // Rebuild the history from the persisted store once, before subscribing, so
+  // the normal replay path serves it (and a terminal status closes the stream).
+  if (services.hub.events(runId).length === 0) {
+    for (const event of services.orchestrator.replayEvents(runId)) {
+      services.hub.publish(runId, event);
+    }
+  }
 
   const encoder = new TextEncoder();
   const heartbeatMs = options.heartbeatMs ?? 15_000;

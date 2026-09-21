@@ -59,6 +59,27 @@ export interface CallRow {
   created_at: number;
 }
 
+/**
+ * The calls table narrowed to event-replay fields. Deliberately excludes the
+ * verbatim prompt/response TEXT — megabyte-scale on context-threaded runs —
+ * because SSE call events never carry it; the calls table itself remains the
+ * verbatim record. `ok` mirrors the store's broadcast mapping (a row with a
+ * response is a successful attempt).
+ */
+export interface CallMetaRow {
+  id: string;
+  run_id: string;
+  stage_id: string;
+  role: CallRole;
+  loop: number;
+  attempt: number;
+  ok: 0 | 1;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  ms: number | null;
+  error: string | null;
+}
+
 /** Row shape of the stage_artifacts table — latest artifact per (run, stage, kind, language). */
 export interface StageArtifactRow {
   run_id: string;

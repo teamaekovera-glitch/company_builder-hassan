@@ -167,5 +167,62 @@ describe("orchestrator API handlers", () => {
       expect(events.map((event) => event.seq)).toEqual([1, 2, 3, 4]);
       expect(events.at(-1)).toMatchObject({ kind: "run", status: "failed" });
     }, 30_000);
+
+    it("hydrates a cold hub from the persisted store so a post-restart reload still replays", async () => {
+      // Persist a finished run WITHOUT touching the hub — the fresh-process
+      // case: the in-memory replay log is gone, the store has everything.
+      const runId = "cold-run";
+      store.createRun({
+        id: runId,
+        idea: "x",
+        config: { depth: "standard", languages: ["en"], scoreThreshold: 9 },
+      });
+      store.recordCall({
+        id: "c1",
+        runId,
+        stageId: "s1",
+        role: "generatorA",
+        loop: 0,
+        attempt: 1,
+        prompt: "p",
+        response: "r",
+        inputTokens: 100,
+        outputTokens: 50,
+        ms: 300,
+      });
+      store.recordCall({
+        id: "c2",
+        runId,
+        stageId: "s1",
+        role: "critic:vc",
+        loop: 0,
+        attempt: 2,
+        prompt: "p",
+        response: null,
+        error: "rate limited: 429",
+      });
+      store.updateStageProgress(runId, "s1", { status: "done", loop: 0, score: 9.1 });
+      store.setRunStatus(runId, "completed");
+      expect(services.hub.events(runId)).toHaveLength(0);
+
+      const res = handleRunEvents(services, runId, { heartbeatMs: 60_000 });
+      const events = parseSSE(await res.text());
+
+      // created → both call attempts (verbatim) → final stage state → terminal
+      // lifecycle. The terminal event closes the stream, as live runs do.
+      expect(events.map((event) => event.kind)).toEqual(["run", "call", "call", "stage", "run"]);
+      expect(events.map((event) => event.seq)).toEqual([1, 2, 3, 4, 5]);
+      expect(events[2]).toMatchObject({ kind: "call", ok: false, error: "rate limited: 429" });
+      expect(events[3]).toMatchObject({ kind: "stage", status: "done", score: 9.1 });
+      expect(events.at(-1)).toMatchObject({ kind: "run", status: "completed" });
+
+      // The hub is now warm: a second subscriber receives the same history.
+      const seen: string[] = [];
+      const unsubscribe = services.hub.subscribe(runId, (event) => {
+        seen.push(`${event.kind}:${event.seq}`);
+      });
+      unsubscribe();
+      expect(seen).toEqual(["run:1", "call:2", "call:3", "stage:4", "run:5"]);
+    });
   });
 });

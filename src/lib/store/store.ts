@@ -19,6 +19,7 @@ import { randomBytes } from "node:crypto";
 import Database from "better-sqlite3";
 import {
   SCHEMA_SQL,
+  type CallMetaRow,
   type CallRow,
   type RunRow,
   type RunStatus,
@@ -111,6 +112,8 @@ export class RunStore {
   private readonly selectStageCalls: Database.Statement<[string, string], CallRow>;
   private readonly selectRunCalls: Database.Statement<[string], CallRow>;
 
+  private readonly selectRunCallMeta: Database.Statement<[string], CallMetaRow>;
+
   private readonly upsertArtifact: Database.Statement<[StageArtifactRow], unknown>;
   private readonly selectArtifact: Database.Statement<
     [string, string, string, string],
@@ -175,6 +178,11 @@ export class RunStore {
     this.selectRunCalls = this.db.prepare<[string], CallRow>(
       "SELECT * FROM calls WHERE run_id = ? ORDER BY rowid",
     );
+    this.selectRunCallMeta = this.db.prepare<[string], CallMetaRow>(`
+      SELECT id, run_id, stage_id, role, loop, attempt,
+             response IS NOT NULL AS ok, input_tokens, output_tokens, ms, error
+      FROM calls WHERE run_id = ? ORDER BY rowid
+    `);
 
     this.upsertArtifact = this.db.prepare<[StageArtifactRow], unknown>(`
       INSERT INTO stage_artifacts (run_id, stage_id, kind, language, text, score)
@@ -264,6 +272,15 @@ export class RunStore {
   /** All call rows for a run, in insertion (chronological) order. */
   listRunCalls(runId: string): CallRow[] {
     return this.selectRunCalls.all(runId);
+  }
+
+  /**
+   * Event-replay rows for a run as a lazy cursor, in insertion order — the
+   * metadata columns only, no verbatim TEXT, so replay hydration stays
+   * bounded in memory no matter how large the calls table has grown.
+   */
+  iterateRunCalls(runId: string): IterableIterator<CallMetaRow> {
+    return this.selectRunCallMeta.iterate(runId);
   }
 
   /** Creates the stage row if absent, then applies a partial progress patch. */

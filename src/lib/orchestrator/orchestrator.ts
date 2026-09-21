@@ -29,6 +29,7 @@ import type { RunRow, RunStatus, RunTotals, StageStatusRow } from "../store/sche
 import { newId, type RunStore } from "../store/store";
 import type { PreflightEstimate } from "../dashboard/types";
 import { costFromTokens, estimateRun } from "./estimate";
+import { synthesizeReplayEvents, type PublishableEvent } from "./events";
 
 /** Strategy angles for alternative-company runs (spec RunConfig). */
 export const STRATEGY_ANGLES = ["bootstrapped", "vc-scale", "enterprise-first"] as const;
@@ -229,6 +230,22 @@ export class Orchestrator {
       totals: { ...totals, costUsd: costFromTokens(totals) },
       stages: this.store.listStageStatus(runId),
     };
+  }
+
+  /**
+   * Rebuilds the run's event history from the persisted store — the cold-hub
+   * case after a process restart, when the SSE hub's in-memory replay log is
+   * empty but the run's durable state is intact. Empty for an unknown id.
+   */
+  replayEvents(runId: string): PublishableEvent[] {
+    const run = this.store.getRun(runId);
+    if (!run) return [];
+    return synthesizeReplayEvents(
+      runId,
+      run.status,
+      this.store.listStageStatus(runId),
+      this.store.iterateRunCalls(runId),
+    );
   }
 
   /**
