@@ -42,6 +42,13 @@ export function shortBody(seed: string): string {
 
 export interface RecordedCall {
   role: string;
+  /**
+   * The full user prompt, retained only when the adapter was created with
+   * `retainPrompts` (empty string otherwise). Prompt retention is opt-in
+   * because late-pipeline prompts embed the whole artifact list — multi-MB
+   * at scale — and one retained copy per call exhausts the worker heap on
+   * multi-run test files.
+   */
   user: string;
   /** The verbatim response the adapter produced for this completed call. */
   response: string;
@@ -56,6 +63,14 @@ export interface ScriptedAdapterOptions {
   onAttempt?: (info: { role: string; user: string; call: number; attempt: number }) => AttemptBehavior;
   /** Called for every completed (validated) call, in completion order. */
   onCall?: (call: RecordedCall) => void;
+  /**
+   * Retain each call's full user prompt on the recorded call (default false).
+   * Late-pipeline prompts embed the whole artifact list — multi-MB at scale —
+   * so retaining one per call across a multi-run test file exhausts the
+   * worker heap. Only tests that verify prompt content should opt in; tests
+   * that only count calls or inspect responses must not pay for it.
+   */
+  retainPrompts?: boolean;
 }
 
 export interface ScriptedAdapter extends LLMAdapter {
@@ -77,6 +92,7 @@ export function createScriptedAdapter(opts: ScriptedAdapterOptions): ScriptedAda
   let callNo = 0;
   let reconciles = 0;
   const attemptByKey = new Map<string, number>();
+  const retainPrompts = opts.retainPrompts ?? false;
 
   return {
     model: "scripted-mock",
@@ -95,11 +111,14 @@ export function createScriptedAdapter(opts: ScriptedAdapterOptions): ScriptedAda
 
       // Round numbering: the reconciler completes round N (1-based); every
       // other loop call runs inside round reconciles+1 (generators/merger: 0).
-      const round = role === "reconciler" ? reconciles + 1 : reconciles;
+      // Prefixed forms (`rerun:<stage>:reconciler`) count as reconcilers too —
+      // the auto re-run's re-loops emit the same markers.
+      const isReconciler = role === "reconciler" || role?.endsWith(":reconciler") === true;
+      const round = isReconciler ? reconciles + 1 : reconciles;
       let text: string;
       if (behavior === "short") {
         text = shortBody(role);
-      } else if (role === "reconciler") {
+      } else if (isReconciler) {
         const score = typeof opts.scores === "function" ? opts.scores(round) : opts.scores[round - 1];
         if (score === undefined) {
           throw new Error(`fixture misconfigured: no scripted score for round ${round}`);
@@ -110,8 +129,8 @@ export function createScriptedAdapter(opts: ScriptedAdapterOptions): ScriptedAda
         text = longBody(role, round);
       }
 
-      calls.push({ role, user: req.user, response: text });
-      opts.onCall?.({ role, user: req.user, response: text });
+      calls.push({ role, user: retainPrompts ? req.user : "", response: text });
+      opts.onCall?.({ role, user: "", response: text });
       return { text, inputTokens: 100, outputTokens: 1000, model: "scripted-mock", ms: 1 };
     },
   };

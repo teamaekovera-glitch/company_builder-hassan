@@ -12,7 +12,13 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { RunStore } from "../store/store";
-import { buildDossierMarkdown, buildRunLogMarkdown, runLogSections } from "./exports";
+import {
+  buildDossierMarkdown,
+  buildRunLogCallSection,
+  buildRunLogHeader,
+  buildRunLogMarkdown,
+  runLogSections,
+} from "./exports";
 
 const UPDATE_GOLDENS = process.env.UPDATE_GOLDENS === "1";
 
@@ -94,6 +100,60 @@ describe("export builders — golden files (spec row 11)", () => {
     // Localisation: translation rows only, two languages, unordered on purpose.
     store.putArtifact({ runId: "run-golden", stageId: "localisation", kind: "translation:hi", text: "लोकल की गई फाइल।" });
     store.putArtifact({ runId: "run-golden", stageId: "localisation", kind: "translation:de", text: "Lokalisierte Fassung des Dossiers." });
+    // Pass-stage outputs render verbatim under their kind labels: resolved
+    // contradictions (consistency audit), localisation QA verdicts and
+    // cultural adaptation, and the auto re-run (selection, outcome, winner,
+    // downstream recheck).
+    store.putArtifact({
+      runId: "run-golden",
+      stageId: "consistency-audit",
+      kind: "audit-pair:1",
+      text: "Pair audit 1 — PRD ↔ GTM timeline.\nCONTRADICTION: the PRD promises Q3 launch, the GTM timeline says Q4.",
+    });
+    store.putArtifact({
+      runId: "run-golden",
+      stageId: "consistency-audit",
+      kind: "audit-resolution:1",
+      text: "Resolved: the launch is Q4 — the GTM timeline is authoritative; the PRD's roadmap section was corrected.",
+    });
+    store.putArtifact({
+      runId: "run-golden",
+      stageId: "localisation",
+      kind: "localisation-qa:es",
+      text: "VERDICT: PASS\nThe Spanish translations preserve clinical terminology and tone; no truncation found.",
+    });
+    store.putArtifact({
+      runId: "run-golden",
+      stageId: "localisation",
+      kind: "cultural-adaptation:es",
+      text: "Adaptation: rural-pharmacy framing localized for Spanish-speaking markets; units kept metric.",
+    });
+    store.putArtifact({
+      runId: "run-golden",
+      stageId: "auto-rerun",
+      kind: "rerun-selection",
+      text: "Weakest stages selected for re-run under the strict 9.5 gate:\n1. Market Analysis (market-analysis) — reconciled score 9.4",
+    });
+    store.putArtifact({
+      runId: "run-golden",
+      stageId: "auto-rerun",
+      kind: "rerun-outcome:market-analysis",
+      score: 9.5,
+      text: "Re-run outcome for stage 1 — Market Analysis:\nBefore: 9.4 · After: 9.5 · Rounds: 1 · Gate: 9.5\nThe re-run cleared the strict gate.",
+    });
+    store.putArtifact({
+      runId: "run-golden",
+      stageId: "auto-rerun",
+      kind: "rerun:market-analysis:improved",
+      score: 9.5,
+      text: "Re-run winner text for the market analysis (verbatim copy of the adopted draft).",
+    });
+    store.putArtifact({
+      runId: "run-golden",
+      stageId: "auto-rerun",
+      kind: "recheck:executive-synthesis:executive-synthesis",
+      text: "Recheck of the executive synthesis after the re-run: conclusions unchanged.",
+    });
 
     store.recordCall({
       id: "call-1",
@@ -150,6 +210,19 @@ describe("export builders — golden files (spec row 11)", () => {
     // Exactly one MISSING marker — the done loop stage without its winning draft.
     expect(markdown.match(/MISSING/g)).toHaveLength(1);
     expect(markdown).toContain("pricing-strategy");
+    // Pass-stage outputs render verbatim under their kind labels — resolved
+    // contradictions, localisation QA verdicts, cultural adaptation, re-run
+    // selection/outcome/winner, and the downstream recheck.
+    expect(markdown).toContain("### Pair audit 1 of 6 — pricing ↔ financial model (`audit-pair:1`)");
+    expect(markdown).toContain("CONTRADICTION: the PRD promises Q3 launch");
+    expect(markdown).toContain("### Resolution 1 (`audit-resolution:1`)");
+    expect(markdown).toContain("### Localisation QA — Spanish (`localisation-qa:es`)");
+    expect(markdown).toContain("VERDICT: PASS");
+    expect(markdown).toContain("### Cultural adaptation — Spanish (`cultural-adaptation:es`)");
+    expect(markdown).toContain("### Auto re-run — weakest-stage selection (`rerun-selection`)");
+    expect(markdown).toContain("### Re-run outcome — Market Analysis (`rerun-outcome:market-analysis`)");
+    expect(markdown).toContain("### Re-run winner — Market Analysis (`rerun:market-analysis:improved`)");
+    expect(markdown).toContain("### Recheck — Executive Synthesis — Executive Synthesis (`recheck:executive-synthesis:executive-synthesis`)");
   });
 
   it("run-log.md is byte-exact: every call verbatim with metadata and error blocks", () => {
@@ -198,8 +271,16 @@ describe("export builders — golden files (spec row 11)", () => {
     // so the download starts streaming without materializing call history.
     expect(first.value).toMatch(/^# Run log/);
 
-    const streamed = [first.value, ...generator].join("\n").trimEnd() + "\n";
+    const streamed = [first.value, ...generator].join("").trimEnd() + "\n";
     expect(streamed).toBe(buildRunLogMarkdown(store, run));
+
+    // Cross-check against the in-memory section builder over full rows: the
+    // chunked fragment stream must render every call byte-identically.
+    const sections = [
+      buildRunLogHeader(run, store.countRunCalls(runId)),
+      ...store.listRunCalls(runId).map((call, index) => buildRunLogCallSection(call, index)),
+    ].join("\n");
+    expect(streamed).toBe(`${sections.trimEnd()}\n`);
   });
 
   it("run-log sections stream byte-identically for a run with no calls", () => {
@@ -212,8 +293,44 @@ describe("export builders — golden files (spec row 11)", () => {
     const run = store.getRun("run-empty");
     if (!run) throw new Error("seed failed");
 
-    const streamed = [...runLogSections(store, run)].join("\n").trimEnd() + "\n";
+    const streamed = [...runLogSections(store, run)].join("").trimEnd() + "\n";
     expect(streamed).toBe(buildRunLogMarkdown(store, run));
     expect(streamed).toContain("0 calls, verbatim, in run order.");
+  });
+
+  it("chunks verbatim reads: a backtick run straddling the chunk boundary still fences byte-exactly", () => {
+    const runId = seedGoldenRun();
+    // Prompt larger than one VERBATIM_CHUNK_CHARS chunk with a backtick run
+    // spanning the chunk boundary, plus nested fences of varying lengths —
+    // the streamed fence must match the materialized builder exactly.
+    const boundary = 8_388_608;
+    const prompt =
+      // x's end at code point 8,388,602; the 12-backtick run spans 8,388,603
+      // through 8,388,614 — chunk 1 (code points 1..8,388,608) ends mid-run.
+      "x".repeat(boundary - 6) + "`".repeat(12) + "\n```\nplain\n````\n" + "z".repeat(2_000_000);
+    store.recordCall({
+      id: "call-chunked",
+      runId,
+      stageId: "market-analysis",
+      role: "gen-a",
+      loop: 0,
+      attempt: 1,
+      prompt,
+      response: "fine",
+      inputTokens: 1,
+      outputTokens: 1,
+      ms: 1,
+    });
+    const run = store.getRun(runId);
+    if (!run) throw new Error("seed failed");
+
+    const streamed = [...runLogSections(store, run)].join("");
+    const calls = store.listRunCalls(runId);
+    const call = calls.at(-1);
+    if (!call) throw new Error("seed failed");
+    expect(streamed).toContain(`${buildRunLogCallSection(call, calls.length - 1)}\n`);
+    // The straddling 5-backtick run (not the smaller nested fences) drives the fence size.
+    expect(streamed).toContain("`".repeat(13) + "\n");
+    // The straddling 12-backtick run (not the nested fences) drives the fence size.
   });
 });

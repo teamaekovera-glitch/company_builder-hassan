@@ -9,9 +9,10 @@
  */
 
 import { LANGUAGE_LABELS } from "../dashboard/types";
+import { artifactLabel } from "../pipeline/executor/expansions";
 import { STAGE_NODES, type StageId, type StageNode } from "../pipeline/graph/stages";
 import { WINNING_ARTIFACT_KIND } from "../pipeline/executor/stage";
-import type { CallRow, RunRow, StageArtifactRow, StageStatusRow } from "../store/schema";
+import type { CallRow, CallVerbatimMetaRow, RunRow, StageArtifactRow, StageStatusRow } from "../store/schema";
 import type { RunStore } from "../store/store";
 
 /** Label for a kind-encoded language code; unknown codes render as themselves. */
@@ -28,12 +29,75 @@ function fenced(text: string): string {
   return `${fence}\n${text}\n${fence}`;
 }
 
+/**
+ * Bounded verbatim chunk: SQLite `substr` reads at most this many code points
+ * per string (~24 MB of UTF-8). Sized so a typical multi-megabyte call reads
+ * in ONE substr query — every substr call re-decodes the stored row, so tiny
+ * chunks multiply decode cost ~row-size/chunk-fold — while peak memory stays
+ * at one chunk, never one row's whole history.
+ */
+const VERBATIM_CHUNK_CHARS = 8_388_608;
+
+/** Reads one verbatim column in bounded character chunks (`startChar` is 1-based, code points). */
+type VerbatimChunkReader = (startChar: number, chars: number) => string;
+
+/**
+ * The fence `fenced()` would pick for text read as bounded chunks — computed
+ * WITHOUT materializing the full text. Backtick runs straddling a chunk
+ * boundary are stitched by carrying the open run count between chunks.
+ */
+function fenceLengthOf(chunks: readonly string[]): number {
+  let longest = 0;
+  let carry = 0; // open backtick run at the current chunk boundary
+  for (const chunk of chunks) {
+    const runs = [...chunk.matchAll(/`+/g)];
+    if (runs.length === 0) {
+      longest = Math.max(longest, carry);
+      carry = 0;
+      continue;
+    }
+    for (const match of runs) {
+      const length = (match.index === 0 ? carry : 0) + match[0].length;
+      carry = 0;
+      if (match.index! + match[0].length === chunk.length) {
+        carry = length; // may continue into the next chunk
+      } else {
+        longest = Math.max(longest, length);
+      }
+    }
+  }
+  return Math.max(3, Math.max(longest, carry) + 1);
+}
+
+/**
+ * Yields a fenced verbatim block as bounded fragments: opening fence, text
+ * chunks, closing fence. Byte-identical to `fenced()` over the whole text,
+ * but no single string ever exceeds one chunk and the full text never
+ * materializes as one value. Chunks are read exactly once (one pass), so
+ * peak memory is one row's chunk list, not the whole call history.
+ */
+function* fencedFragments(reader: VerbatimChunkReader, chars: number): Generator<string> {
+  const chunks: string[] = [];
+  for (let start = 1; start <= chars; start += VERBATIM_CHUNK_CHARS) {
+    chunks.push(reader(start, VERBATIM_CHUNK_CHARS));
+  }
+  const fence = "`".repeat(fenceLengthOf(chunks));
+  yield `${fence}\n`;
+  for (const chunk of chunks) yield chunk;
+  yield `\n${fence}`;
+}
+
 /** Kinds a loop stage's quality loop must have produced. */
 function isLoopStage(node: StageNode | undefined): boolean {
   return node?.kind === "stage";
 }
 
-/** One dossier entry: the winning improved draft plus every translation. */
+/** Human stage title from the graph, or undefined for artifact-only stages. */
+function stageTitleOf(stageId: string): string | undefined {
+  return STAGE_NODES.find((node) => node.id === stageId)?.title;
+}
+
+/** One dossier entry: the winning improved draft, every translation, and all pass outputs. */
 interface StageExport {
   stageId: string;
   title: string;
@@ -44,6 +108,13 @@ interface StageExport {
   improved: StageArtifactRow | undefined;
   /** Kind-encoded translations (`translation:<lang>`), sorted by language code. */
   translations: { code: string; row: StageArtifactRow }[];
+  /**
+   * Pass-stage outputs beyond translations, in run order — audit pair
+   * reports and resolutions, localisation QA verdicts, cultural
+   * adaptations, re-run selections/outcomes, rechecks, syntheses, persona
+   * rewrites, output formats. Rendered verbatim and labeled; never dropped.
+   */
+  passArtifacts: StageArtifactRow[];
 }
 
 function stageExports(store: RunStore, runId: string): StageExport[] {
@@ -60,18 +131,22 @@ function stageExports(store: RunStore, runId: string): StageExport[] {
   return [...known.map((node) => node.id), ...unknown].map((stageId) => {
     const node = STAGE_NODES.find((n) => n.id === (stageId as StageId));
     const rows = byStage.get(stageId) ?? [];
+    const translations = rows
+      .flatMap((row) => {
+        const match = /^translation:([a-z-]+)$/.exec(row.kind);
+        return match ? [{ code: match[1] ?? "", row }] : [];
+      })
+      .sort((a, b) => a.code.localeCompare(b.code));
     return {
       stageId,
       title: node?.title ?? stageId,
       isLoop: isLoopStage(node),
       status: store.getStageStatus(runId, stageId),
       improved: rows.find((row) => row.kind === WINNING_ARTIFACT_KIND),
-      translations: rows
-        .flatMap((row) => {
-          const match = /^translation:([a-z-]+)$/.exec(row.kind);
-          return match ? [{ code: match[1] ?? "", row }] : [];
-        })
-        .sort((a, b) => a.code.localeCompare(b.code)),
+      translations,
+      passArtifacts: isLoopStage(node)
+        ? []
+        : rows.filter((row) => !/^translation:/.test(row.kind)),
     };
   });
 }
@@ -84,10 +159,14 @@ function configLine(run: RunRow): string {
 }
 
 /**
- * dossier.md — contents list plus every improved artifact grouped by stage
- * and language (spec global actions). Verbatim texts; a loop stage whose
- * improved draft is absent is marked MISSING, never dropped. The caller has
- * already resolved the run row.
+ * dossier.md — contents list plus every deliverable grouped by stage and
+ * language (spec global actions): the improved draft and translations for
+ * loop stages, every pass-stage output verbatim (audit reports and
+ * resolutions, localisation QA verdicts, cultural adaptations, re-run
+ * selection/outcomes, rechecks, syntheses, persona rewrites, output
+ * formats). A stage whose expected deliverable is absent is marked MISSING,
+ * never dropped or fabricated (spec failure mode: missing or escaped
+ * artifacts). The caller has already resolved the run row.
  */
 export function buildDossierMarkdown(store: RunStore, run: RunRow): string {
   const stages = stageExports(store, run.id);
@@ -113,7 +192,7 @@ export function buildDossierMarkdown(store: RunStore, run: RunRow): string {
 
   for (const stage of stages) {
     lines.push(`---`, "", `## ${stage.title} (\`${stage.stageId}\`)`, "");
-    const hasBody = stage.improved !== undefined || stage.translations.length > 0;
+    const hasBody = stage.improved !== undefined || stage.translations.length > 0 || stage.passArtifacts.length > 0;
     if (stage.isLoop && stage.improved === undefined) {
       lines.push(
         `> MISSING: the winning improved draft for this stage was not found in the store${stage.status ? ` (stage status: ${stage.status.status})` : ""}.`,
@@ -130,6 +209,12 @@ export function buildDossierMarkdown(store: RunStore, run: RunRow): string {
     }
     for (const t of stage.translations) {
       lines.push(`### ${translationLabel(t.code)} (\`${t.code}\`)`, "", fenced(t.row.text), "");
+    }
+    // Pass-stage outputs (audits, resolutions, QA verdicts, adaptations,
+    // re-runs, rechecks, syntheses, persona rewrites, formats) render in run
+    // order under their kind's human label — verbatim, never fabricated.
+    for (const artifact of stage.passArtifacts) {
+      lines.push(`### ${artifactLabel(artifact.kind, stageTitleOf)} (\`${artifact.kind}\`)`, "", fenced(artifact.text), "");
     }
   }
   return `${lines.join("\n").trimEnd()}\n`;
@@ -185,21 +270,71 @@ export function buildRunLogCallSection(call: CallRow, index: number): string {
 }
 
 /**
- * run-log.md as a lazy section stream: the header, then one section per call
- * in run order. Late-pipeline prompts thread every upstream artifact and can
- * reach megabytes each — the store cursor materializes one verbatim row at a
- * time, so multi-gigabyte call histories never accumulate in memory. Byte
- * equivalence with buildRunLogMarkdown holds by construction (that builder
- * consumes this generator), keeping the golden tests authoritative for the
- * streamed bytes too.
+ * run-log.md as a lazy fragment stream: the header, then each call's section
+ * as bounded fragments whose concatenation reproduces the document byte for
+ * byte. Late-pipeline prompts thread every upstream artifact and can reach
+ * megabytes each — fragments read the verbatim columns through SQLite
+ * `substr` chunks so no string ever exceeds one chunk, keeping multi-gigabyte
+ * call histories out of memory (see store.iterateRunCallVerbatimMeta).
+ *
+ * Each fragment ends with exactly the newlines the full document needs —
+ * including the one-line separator between sections — so the stream is also
+ * self-consistent: concatenated fragments are the download, and the same
+ * fragments build the materialized document.
  */
 export function* runLogSections(store: RunStore, run: RunRow): Generator<string> {
-  yield buildRunLogHeader(run, store.countRunCalls(run.id));
+  yield `${buildRunLogHeader(run, store.countRunCalls(run.id))}\n`;
   let index = 0;
-  for (const call of store.iterateRunCallRows(run.id)) {
-    yield buildRunLogCallSection(call, index);
+  for (const meta of store.iterateRunCallVerbatimMeta(run.id)) {
+    yield* runLogCallFragments(store, meta, index);
+    yield "\n";
     index += 1;
   }
+}
+
+/**
+ * One call's section as bounded fragments. Byte-identical to
+ * `${buildRunLogCallSection(...)}\n` (the trailing newline is the section
+ * separator); the prompt and response bodies stream through chunked reads
+ * and never materialize whole.
+ */
+function* runLogCallFragments(
+  store: RunStore,
+  meta: CallVerbatimMetaRow,
+  index: number,
+): Generator<string> {
+  yield [
+    `---`,
+    ``,
+    `## Call ${index + 1} — \`${meta.stage_id}\` / \`${meta.role}\``,
+    ``,
+    `- loop: ${meta.loop} · attempt: ${meta.attempt}`,
+    `- tokens: ${meta.input_tokens ?? "—"} in / ${meta.output_tokens ?? "—"} out · ${meta.ms ?? "—"} ms`,
+    ``,
+    `### Prompt`,
+    ``,
+    ``,
+  ].join("\n");
+  yield* fencedFragments((start, chars) => store.getCallPromptChunk(meta.id, start, chars), meta.promptChars);
+
+  const errorText = meta.error;
+  const hasError = errorText !== null && errorText !== "";
+  const hasResponse = meta.hasResponse === 1 && meta.responseChars > 0;
+  if (hasError && errorText) {
+    yield `\n\n### Error\n\n${fenced(errorText)}`;
+  }
+  if (hasResponse) {
+    yield "\n\n### Response\n\n";
+    yield* fencedFragments(
+      (start, chars) => store.getCallResponseChunk(meta.id, start, chars),
+      meta.responseChars,
+    );
+  } else if (!hasError) {
+    yield "\n\n### Response\n\n> MISSING: no response and no error recorded for this attempt.";
+  }
+  // The section's trailing empty line — every buildRunLogCallSection array
+  // ends with "" — then runLogSections adds the one-line section separator.
+  yield "\n";
 }
 
 /**
@@ -208,5 +343,5 @@ export function* runLogSections(store: RunStore, run: RunRow): Generator<string>
  * runLogSections instead (see handleExportRunLog).
  */
 export function buildRunLogMarkdown(store: RunStore, run: RunRow): string {
-  return `${[...runLogSections(store, run)].join("\n").trimEnd()}\n`;
+  return `${[...runLogSections(store, run)].join("").trimEnd()}\n`;
 }

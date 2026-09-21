@@ -98,6 +98,13 @@ export interface PassCallDef {
   count?: number;
   /** Marked when the real count is decided by pipeline data. */
   dataDependent?: boolean;
+  /**
+   * For data-dependent calls: the role whose recorded artifacts decide the
+   * count at runtime (e.g. one resolution call per contradiction found in
+   * the pair audits). Executor contract: the count equals the number of
+   * `CONTRADICTION:` lines parsed across those artifacts.
+   */
+  countFrom?: string;
   description?: string;
 }
 
@@ -173,6 +180,52 @@ const AUDIT_PAIR_STAGES: StageId[] = [
   "brand-identity",
   "hiring-plan",
   "gtm-timeline",
+];
+
+/**
+ * The six related stage pairs the consistency audit cross-checks (stage 32),
+ * in brief order — the brief names pricing↔financial model, PRD↔API,
+ * API↔database, marketing↔brand, hiring↔financial model, roadmap↔GTM.
+ */
+export const AUDIT_PAIRS: readonly { id: string; left: StageId; right: StageId; label: string }[] = [
+  { id: "pricing-financials", left: "pricing-strategy", right: "financial-model", label: "pricing ↔ financial model" },
+  { id: "prd-api", left: "prd", right: "api-design", label: "PRD ↔ API" },
+  { id: "api-database", left: "api-design", right: "database", label: "API ↔ database" },
+  { id: "marketing-brand", left: "marketing-plan", right: "brand-identity", label: "marketing ↔ brand" },
+  { id: "hiring-financials", left: "hiring-plan", right: "financial-model", label: "hiring ↔ financial model" },
+  // The spec's sixth pair ("roadmap↔GTM") audits the 4-quarter roadmap —
+  // part of the PRD's deliverable per the spec — against the GTM timeline.
+  { id: "roadmap-gtm", left: "prd", right: "gtm-timeline", label: "roadmap ↔ GTM timeline" },
+];
+
+/** The summary ladder's six rungs (stage 34), in brief order. */
+export const SUMMARY_LADDER_RUNGS: readonly string[] = [
+  "10,000 words",
+  "5,000 words",
+  "2,000 words",
+  "500 words",
+  "100 words",
+  "one tweet",
+];
+
+/** The six persona rewrites (stage 38), in brief order. */
+export const PERSONA_REWRITE_AUDIENCES: readonly string[] = [
+  "CEO",
+  "CTO",
+  "CFO",
+  "CMO",
+  "first engineer hire",
+  "first customer",
+];
+
+/** The six output formats (stage 39), in brief order. */
+export const OUTPUT_FORMAT_SPECS: readonly string[] = [
+  "Markdown dossier",
+  "slide-deck script",
+  "two-host podcast script (6,000 words)",
+  "100-question FAQ",
+  "Notion-style wiki structure",
+  "12-email investor-update series",
 ];
 
 const PASS_WAVE_6: StageId[] = [
@@ -555,8 +608,14 @@ export const STAGE_NODES: StageNode[] = [
     kind: "pass",
     deps: AUDIT_PAIR_STAGES,
     passCalls: [
-      { role: "audit-pair", count: 6, description: "one call per related stage pair" },
-      { role: "audit-resolution", count: 0, dataDependent: true, description: "one call per contradiction found" },
+      { role: "audit-pair", count: AUDIT_PAIRS.length, description: "one call per related stage pair" },
+      {
+        role: "audit-resolution",
+        count: 0,
+        dataDependent: true,
+        countFrom: "audit-pair",
+        description: "one call per contradiction found",
+      },
     ],
     expansions: [],
   },
@@ -579,7 +638,7 @@ export const STAGE_NODES: StageNode[] = [
     wave: 7,
     kind: "pass",
     deps: ["executive-synthesis"],
-    passCalls: [{ role: "summary-ladder", count: 6, description: "10k / 5k / 2k / 500 / 100 words / one tweet" }],
+    passCalls: [{ role: "summary-ladder", count: SUMMARY_LADDER_RUNGS.length, description: "10k / 5k / 2k / 500 / 100 words / one tweet" }],
     expansions: [],
   },
   {
@@ -624,7 +683,7 @@ export const STAGE_NODES: StageNode[] = [
     wave: 7,
     kind: "pass",
     deps: ["auto-rerun"],
-    passCalls: [{ role: "persona-rewrite", count: 6, description: "CEO, CTO, CFO, CMO, first engineer, first customer" }],
+    passCalls: [{ role: "persona-rewrite", count: PERSONA_REWRITE_AUDIENCES.length, description: "CEO, CTO, CFO, CMO, first engineer, first customer" }],
     expansions: [],
   },
   {
@@ -634,7 +693,7 @@ export const STAGE_NODES: StageNode[] = [
     wave: 7,
     kind: "pass",
     deps: ["auto-rerun"],
-    passCalls: [{ role: "output-format", count: 6, description: "markdown, slide deck, podcast, FAQ, wiki, investor emails" }],
+    passCalls: [{ role: "output-format", count: OUTPUT_FORMAT_SPECS.length, description: "markdown, slide deck, podcast, FAQ, wiki, investor emails" }],
     expansions: [],
   },
 ];
