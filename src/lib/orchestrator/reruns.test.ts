@@ -22,6 +22,15 @@ import { ORCHESTRATION_TEST_NODES } from "./test-support";
 
 const IDEA = "A solar-powered cold chain for rural pharmacies";
 
+/**
+ * Each test executes at least one full pipeline through the production
+ * executor, store, and validation machinery — on CI runners that runs 3-13s
+ * per test, past vitest's 5s default (observed: four tests timed out in CI
+ * while passing locally). 30s bounds a real hang without gating on runner
+ * speed.
+ */
+const PIPELINE_TEST_TIMEOUT_MS = 30_000;
+
 describe("rerun controls (spec row 12)", () => {
   let store: EventedRunStore;
   let dir: string;
@@ -81,7 +90,7 @@ describe("rerun controls (spec row 12)", () => {
     expect(store.getRun(sourceId)).toEqual(before.run);
     expect(store.listRunArtifacts(sourceId)).toEqual(before.artifacts);
     expect(store.listRunCalls(sourceId)).toEqual(before.calls);
-  });
+  }, PIPELINE_TEST_TIMEOUT_MS);
 
   it("rerunAlternatives creates three queued runs, one per strategy angle, and leaves the source untouched", async () => {
     const sourceId = createSource();
@@ -101,7 +110,7 @@ describe("rerun controls (spec row 12)", () => {
 
     expect(store.getRun(sourceId)).toEqual(before.run);
     expect(store.listRunArtifacts(sourceId)).toHaveLength(before.artifacts);
-  });
+  }, PIPELINE_TEST_TIMEOUT_MS);
 
   it("the strategy angle is injected into every prompt of a member run", async () => {
     const sourceId = createSource();
@@ -116,7 +125,7 @@ describe("rerun controls (spec row 12)", () => {
     for (const call of calls) {
       expect(call.prompt).toContain("Strategy angle: bootstrapped.");
     }
-  });
+  }, PIPELINE_TEST_TIMEOUT_MS);
 
   it("compareAlternatives records one verbatim comparison call and artifact on the source run", async () => {
     const sourceId = createSource();
@@ -140,7 +149,7 @@ describe("rerun controls (spec row 12)", () => {
 
     const artifact = store.getArtifact(sourceId, COMPARISON_STAGE_ID, COMPARISON_ROLE);
     expect(artifact?.text).toBe(result.comparison);
-  });
+  }, PIPELINE_TEST_TIMEOUT_MS);
 
   it("compareAlternatives rejects while a member run is not completed", async () => {
     const sourceId = createSource();
@@ -153,7 +162,7 @@ describe("rerun controls (spec row 12)", () => {
     await expect(
       orchestrator.compareAlternatives(sourceId, members.map((m) => m.runId)),
     ).rejects.toThrow(/needs every member run completed/);
-  });
+  }, PIPELINE_TEST_TIMEOUT_MS);
 
   it("a failed comparison is recorded verbatim on the source run and rethrown", async () => {
     const inner = createScriptedAdapter({ scores: () => 9.5 });
@@ -186,5 +195,5 @@ describe("rerun controls (spec row 12)", () => {
     expect(comparison.response).toBeNull();
     // No artifact was written for the failed attempt — the run log holds it.
     expect(store.getArtifact(sourceId, COMPARISON_STAGE_ID, COMPARISON_ROLE)).toBeUndefined();
-  });
+  }, PIPELINE_TEST_TIMEOUT_MS);
 });
