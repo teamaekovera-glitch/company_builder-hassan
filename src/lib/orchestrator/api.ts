@@ -18,6 +18,7 @@ import { resolveProviderKind, type LLMEnvConfig, type ProviderKind } from "../ll
 import { isTerminalRunStatus, type OrchestratorEvent } from "./events";
 import { SSEHub } from "./hub";
 import {
+  COMPARISON_STAGE_ID,
   Orchestrator,
   RunNotFoundError,
   RunNotQueuedError,
@@ -97,6 +98,15 @@ export function handleGetRun(services: OrchestratorServices, runId: string): Res
   return snapshot ? json(200, snapshot) : errorResponse(new RunNotFoundError(runId));
 }
 
+/** GET /api/runs/:id/stages/:stageId — full stage history for the detail tabs. */
+export function handleGetStageDetail(services: OrchestratorServices, runId: string, stageId: string): Response {
+  if (!services.orchestrator.getSnapshot(runId)) return errorResponse(new RunNotFoundError(runId));
+  const detail = services.orchestrator.stageDetail(runId, stageId);
+  return detail
+    ? json(200, { detail })
+    : json(404, { error: `stage ${stageId} not found in run ${runId}` });
+}
+
 /** POST /api/runs/:id/confirm — the explicit gate before any provider spend. */
 export function handleConfirmRun(services: OrchestratorServices, runId: string): Response {
   try {
@@ -108,6 +118,102 @@ export function handleConfirmRun(services: OrchestratorServices, runId: string):
       console.error(`[orchestrator] run ${runId} aborted by invariant break:`, err);
     });
     return json(202, { runId, status: "running", started: true });
+  } catch (err) {
+    return errorResponse(err);
+  }
+}
+
+/** POST /api/runs/:id/rerun-stricter — fresh queued run at the 9.5 gate; source untouched. */
+export function handleRerunStricter(services: OrchestratorServices, runId: string): Response {
+  try {
+    return json(201, { run: services.orchestrator.rerunStricter(runId) });
+  } catch (err) {
+    return errorResponse(err);
+  }
+}
+
+/** POST /api/runs/:id/rerun-alternatives — three fresh queued runs, one per strategy angle. */
+export function handleRerunAlternatives(services: OrchestratorServices, runId: string): Response {
+  try {
+    return json(201, { runs: services.orchestrator.rerunAlternatives(runId) });
+  } catch (err) {
+    return errorResponse(err);
+  }
+}
+
+/** POST /api/runs/:id/compare-alternatives — body { memberRunIds: string[] }; one comparison call. */
+export function handleCompareAlternatives(services: OrchestratorServices, runId: string, raw: unknown): Response {
+  const memberRunIds: unknown = (raw as { memberRunIds?: unknown } | null)?.memberRunIds;
+  if (
+    !Array.isArray(memberRunIds) ||
+    memberRunIds.length === 0 ||
+    !memberRunIds.every((id) => typeof id === "string" && id.length > 0)
+  ) {
+    return json(400, { error: "body must be { memberRunIds: string[] } — the three alternatives run ids" });
+  }
+  try {
+    const done = services.orchestrator.compareAlternatives(runId, memberRunIds as string[]);
+    // Fire-and-forget like confirmRun: one provider call that can take a
+    // minute; the comparison surfaces in the run log and stage detail when it
+    // lands. Failures are recorded verbatim by the orchestrator.
+    void done.catch((err: unknown) => {
+      console.error(`[orchestrator] alternatives comparison for ${runId} failed:`, err);
+    });
+    return json(202, { runId, stageId: COMPARISON_STAGE_ID, started: true });
+  } catch (err) {
+    return errorResponse(err);
+  }
+}
+
+/** Shared download response: UTF-8 markdown attachment with the given filename. */
+function markdownDownload(markdown: string, filename: string): Response {
+  return new Response(markdown, {
+    headers: {
+      "content-type": "text/markdown; charset=utf-8",
+      "content-disposition": `attachment; filename="${filename}"`,
+    },
+  });
+}
+
+/**
+ * Streaming download for exports whose documents can exceed memory: each
+ * section is encoded and enqueued once, then released. `cancel` closes the
+ * generator on client disconnect so the underlying SQLite cursor is not left
+ * to the GC.
+ */
+function streamedMarkdownDownload(sections: Generator<string>, filename: string): Response {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      const next = sections.next();
+      if (next.done) controller.close();
+      else controller.enqueue(encoder.encode(next.value));
+    },
+    cancel() {
+      sections.return(undefined);
+    },
+  });
+  return new Response(stream, {
+    headers: {
+      "content-type": "text/markdown; charset=utf-8",
+      "content-disposition": `attachment; filename="${filename}"`,
+    },
+  });
+}
+
+/** GET /api/runs/:id/export/dossier — dossier.md download (spec global actions). */
+export function handleExportDossier(services: OrchestratorServices, runId: string): Response {
+  try {
+    return markdownDownload(services.orchestrator.dossierMarkdown(runId), "dossier.md");
+  } catch (err) {
+    return errorResponse(err);
+  }
+}
+
+/** GET /api/runs/:id/export/run-log — run-log.md download (spec global actions). */
+export function handleExportRunLog(services: OrchestratorServices, runId: string): Response {
+  try {
+    return streamedMarkdownDownload(services.orchestrator.runLogSections(runId), "run-log.md");
   } catch (err) {
     return errorResponse(err);
   }

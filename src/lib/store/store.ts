@@ -111,6 +111,7 @@ export class RunStore {
   private readonly insertCall: Database.Statement<[CallRow], unknown>;
   private readonly selectStageCalls: Database.Statement<[string, string], CallRow>;
   private readonly selectRunCalls: Database.Statement<[string], CallRow>;
+  private readonly countRunCallsStmt: Database.Statement<[string], { n: number }>;
 
   private readonly selectRunCallMeta: Database.Statement<[string], CallMetaRow>;
 
@@ -177,6 +178,9 @@ export class RunStore {
     );
     this.selectRunCalls = this.db.prepare<[string], CallRow>(
       "SELECT * FROM calls WHERE run_id = ? ORDER BY rowid",
+    );
+    this.countRunCallsStmt = this.db.prepare<[string], { n: number }>(
+      "SELECT COUNT(*) AS n FROM calls WHERE run_id = ?",
     );
     this.selectRunCallMeta = this.db.prepare<[string], CallMetaRow>(`
       SELECT id, run_id, stage_id, role, loop, attempt,
@@ -272,6 +276,22 @@ export class RunStore {
   /** All call rows for a run, in insertion (chronological) order. */
   listRunCalls(runId: string): CallRow[] {
     return this.selectRunCalls.all(runId);
+  }
+
+  /**
+   * Full call rows (verbatim prompt/response text included) as a lazy cursor
+   * in insertion order — one row materialized at a time. Late-pipeline prompts
+   * thread every upstream artifact and can reach megabytes each; verbatim
+   * exports must never `.all()` them into memory at once.
+   */
+  iterateRunCallRows(runId: string): IterableIterator<CallRow> {
+    return this.selectRunCalls.iterate(runId);
+  }
+
+  /** Number of recorded calls for a run (aggregate only — no text read). */
+  countRunCalls(runId: string): number {
+    const row = this.countRunCallsStmt.get(runId) as { n: number };
+    return row?.n ?? 0;
   }
 
   /**

@@ -15,23 +15,31 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import ConfigScreen from "@/components/ui/ConfigScreen";
-import { MissingKeyBanner } from "@/components/ui/GlobalActions";
+import { DownloadButtons, MissingKeyBanner, RerunControls } from "@/components/ui/GlobalActions";
 import RunHeader from "@/components/ui/RunHeader";
+import StageDetailPanel from "@/components/ui/StageDetail";
 import WaveBoard from "@/components/ui/WaveBoard";
 import type { ProviderInfoBody } from "@/lib/orchestrator/api";
 import {
+  compareAlternatives,
   confirmRun,
   createRun,
+  dossierUrl,
   fetchEstimate,
   fetchLatestRun,
   fetchProviderInfo,
   fetchSnapshot,
+  fetchStageDetail,
+  rerunAlternatives,
+  rerunStricter,
+  runLogUrl,
+  type RerunCreated,
 } from "@/lib/dashboard/client-api";
 import { DEFAULT_CONFIG } from "@/lib/dashboard/fixtures";
 import { runMetrics, stageCards, type RunLiveState } from "@/lib/dashboard/live-model";
 import { useLiveRun } from "@/lib/dashboard/use-live-run";
 import type { RunStatus as StoreRunStatus } from "@/lib/store/schema";
-import type { PreflightEstimate, RunConfigDraft } from "@/lib/dashboard/types";
+import type { PreflightEstimate, RunConfigDraft, StageDetailData, StageDetailTab } from "@/lib/dashboard/types";
 
 type Phase = { kind: "loading" } | { kind: "config" } | { kind: "board"; runId: string };
 
@@ -83,7 +91,11 @@ export default function OperatorDashboard() {
         ) : phase.kind === "config" ? (
           <ConfigView provider={provider} onStarted={(runId) => setPhase({ kind: "board", runId })} />
         ) : (
-          <RunView runId={phase.runId} onNewRun={() => setPhase({ kind: "config" })} />
+          <RunView
+            runId={phase.runId}
+            onNewRun={() => setPhase({ kind: "config" })}
+            onSwitchRun={(newRunId) => setPhase({ kind: "board", runId: newRunId })}
+          />
         )}
 
         {loadError ? (
@@ -196,7 +208,15 @@ function ConfigView({
 }
 
 /** Run board for one run — SSE replay is the source of truth (no polling). */
-function RunView({ runId, onNewRun }: { runId: string; onNewRun: () => void }) {
+function RunView({
+  runId,
+  onNewRun,
+  onSwitchRun,
+}: {
+  runId: string;
+  onNewRun: () => void;
+  onSwitchRun: (runId: string) => void;
+}) {
   // The event stream rebuilds the whole board; the snapshot only seeds the
   // depth and the run status shown before the first replay lands.
   const { state, connected } = useLiveRun(runId);
@@ -205,6 +225,53 @@ function RunView({ runId, onNewRun }: { runId: string; onNewRun: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [confirming, setConfirming] = useState(false);
+  // Stage detail: clicking a card opens its full history (T9).
+  const [selectedStageId, setSelectedStageId] = useState<string | null>(null);
+  // Rerun controls (T9): created runs are listed with their own explicit
+  // confirm buttons — a rerun never spends without the operator's confirm.
+  const [createdReruns, setCreatedReruns] = useState<RerunCreated[]>([]);
+  const [rerunError, setRerunError] = useState<string | null>(null);
+  const [rerunBusy, setRerunBusy] = useState(false);
+
+  const doRerunStricter = useCallback(async () => {
+    if (rerunBusy) return;
+    setRerunBusy(true);
+    setRerunError(null);
+    try {
+      const created = await rerunStricter(runId);
+      onSwitchRun(created.runId);
+    } catch (err) {
+      setRerunError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRerunBusy(false);
+    }
+  }, [rerunBusy, runId, onSwitchRun]);
+
+  const doRerunAlternatives = useCallback(async () => {
+    if (rerunBusy) return;
+    setRerunBusy(true);
+    setRerunError(null);
+    try {
+      setCreatedReruns(await rerunAlternatives(runId));
+    } catch (err) {
+      setRerunError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRerunBusy(false);
+    }
+  }, [rerunBusy, runId]);
+
+  const doCompareAlternatives = useCallback(async () => {
+    if (createdReruns.length === 0) return;
+    setRerunError(null);
+    try {
+      await compareAlternatives(
+        runId,
+        createdReruns.map((run) => run.runId),
+      );
+    } catch (err) {
+      setRerunError(err instanceof Error ? err.message : String(err));
+    }
+  }, [createdReruns, runId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -296,17 +363,146 @@ function RunView({ runId, onNewRun }: { runId: string; onNewRun: () => void }) {
           The server restarted during this run — it is recorded as interrupted.
         </p>
       ) : null}
-      <WaveBoard waves={stageCards(displayState, depth)} />
+      <WaveBoard
+        waves={stageCards(displayState, depth)}
+        selectedStageId={selectedStageId}
+        onSelectStage={(card) => setSelectedStageId(card.stageId)}
+      />
+      {selectedStageId ? (
+        <StageDetailSection
+          key={selectedStageId}
+          runId={runId}
+          stageId={selectedStageId}
+          onClose={() => setSelectedStageId(null)}
+        />
+      ) : null}
       {displayState.runStatus === "completed" || displayState.runStatus === "failed" || displayState.runStatus === "interrupted" ? (
-        <button
-          type="button"
-          data-testid="new-run"
-          onClick={onNewRun}
-          className="rounded border border-zinc-700 px-4 py-1.5 text-sm text-zinc-300 hover:border-zinc-500"
-        >
-          Start a new run
-        </button>
+        <div data-testid="global-actions" className="flex flex-col gap-3">
+          <RerunControls onRerunStricter={() => void doRerunStricter()} onAlternatives={() => void doRerunAlternatives()} />
+          {rerunError ? (
+            <p role="alert" data-testid="rerun-error" className="text-xs text-rose-300">
+              {rerunError}
+            </p>
+          ) : null}
+          {createdReruns.length > 0 ? (
+            <div
+              data-testid="rerun-notice"
+              className="flex flex-col gap-2 rounded-lg border border-violet-500/40 bg-violet-500/5 p-3"
+            >
+              <p className="text-xs text-violet-200">
+                {createdReruns.length} fresh run{createdReruns.length === 1 ? "" : "s"} created — nothing is spent
+                until you confirm each one. The original run and its artifacts are untouched.
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                {createdReruns.map((run) => (
+                  <button
+                    key={run.runId}
+                    type="button"
+                    data-testid={`confirm-rerun-${run.runId}`}
+                    onClick={() =>
+                      void confirmRun(run.runId).catch((err: unknown) =>
+                        setRerunError(err instanceof Error ? err.message : String(err)),
+                      )
+                    }
+                    className="rounded border border-violet-500/60 px-2 py-1 text-xs font-semibold text-violet-200 hover:bg-violet-500/20"
+                  >
+                    Confirm run {run.runId}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  data-testid="compare-alternatives"
+                  onClick={() => void doCompareAlternatives()}
+                  className="rounded border border-zinc-600 bg-zinc-800 px-2 py-1 text-xs font-semibold text-zinc-200 hover:border-zinc-400"
+                >
+                  Compare alternatives
+                </button>
+              </div>
+            </div>
+          ) : null}
+          <DownloadButtons
+            onDownloadDossier={() => window.location.assign(dossierUrl(runId))}
+            onDownloadRunLog={() => window.location.assign(runLogUrl(runId))}
+          />
+          <button
+            type="button"
+            data-testid="new-run"
+            onClick={onNewRun}
+            className="w-fit rounded border border-zinc-700 px-4 py-1.5 text-sm text-zinc-300 hover:border-zinc-500"
+          >
+            Start a new run
+          </button>
+        </div>
       ) : null}
     </div>
   );
 }
+
+/**
+ * Stage detail over real data (T9): fetches the stage's full history when the
+ * operator opens a card, surfacing loading / verbatim-error states explicitly.
+ */
+function StageDetailSection({
+  runId,
+  stageId,
+  onClose,
+}: {
+  runId: string;
+  stageId: string;
+  onClose: () => void;
+}) {
+  const [detail, setDetail] = useState<StageDetailData | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<StageDetailTab>("drafts");
+  const [activeLanguage, setActiveLanguage] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setError(null);
+    fetchStageDetail(runId, stageId)
+      .then((d) => {
+        if (!cancelled) setDetail(d);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [runId, stageId]);
+
+  if (error) {
+    return (
+      <div data-testid="stage-detail-error" role="alert" className="rounded-lg border border-rose-900 bg-rose-950/40 p-4">
+        <p className="text-sm text-rose-300">{error}</p>
+        <button
+          type="button"
+          onClick={onClose}
+          className="mt-2 rounded border border-zinc-700 px-3 py-1 text-xs text-zinc-300 hover:border-zinc-500"
+        >
+          Close
+        </button>
+      </div>
+    );
+  }
+
+  if (!detail) {
+    return (
+      <p data-testid="stage-detail-loading" className="py-8 text-center text-sm text-zinc-500">
+        Loading stage history…
+      </p>
+    );
+  }
+
+  return (
+    <StageDetailPanel
+      detail={detail}
+      activeTab={activeTab}
+      onTabChange={setActiveTab}
+      activeLanguage={activeLanguage}
+      onLanguageChange={setActiveLanguage}
+      onClose={onClose}
+    />
+  );
+}
+
