@@ -34,6 +34,7 @@ import type { PreflightEstimate, StageDetailData } from "../dashboard/types";
 import { costFromTokens, estimateRun } from "./estimate";
 import { synthesizeReplayEvents, type PublishableEvent } from "./events";
 import { buildStageDetail } from "./stage-detail";
+import { buildDossierMarkdown, buildRunLogMarkdown } from "./exports";
 
 /** Strategy angles for alternative-company runs (spec RunConfig). */
 export const STRATEGY_ANGLES = ["bootstrapped", "vc-scale", "enterprise-first"] as const;
@@ -407,6 +408,16 @@ export class Orchestrator {
 
   listRuns(): RunRow[] {
     return this.store.listRuns();
+  }
+
+  /** dossier.md (spec global actions) — pure builder over the store. */
+  dossierMarkdown(runId: string): string {
+    return buildDossierMarkdown(this.store, this.requireRun(runId));
+  }
+
+  /** run-log.md (spec global actions) — every prompt and response verbatim. */
+  runLogMarkdown(runId: string): string {
+    return buildRunLogMarkdown(this.store, this.requireRun(runId));
   }
 
   private requireRun(runId: string): RunRow {

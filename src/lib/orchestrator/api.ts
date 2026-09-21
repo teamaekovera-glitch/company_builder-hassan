@@ -165,6 +165,34 @@ export function handleCompareAlternatives(services: OrchestratorServices, runId:
   }
 }
 
+/** Shared download response: UTF-8 markdown attachment with the given filename. */
+function markdownDownload(markdown: string, filename: string): Response {
+  return new Response(markdown, {
+    headers: {
+      "content-type": "text/markdown; charset=utf-8",
+      "content-disposition": `attachment; filename="${filename}"`,
+    },
+  });
+}
+
+/** GET /api/runs/:id/export/dossier — dossier.md download (spec global actions). */
+export function handleExportDossier(services: OrchestratorServices, runId: string): Response {
+  try {
+    return markdownDownload(services.orchestrator.dossierMarkdown(runId), "dossier.md");
+  } catch (err) {
+    return errorResponse(err);
+  }
+}
+
+/** GET /api/runs/:id/export/run-log — run-log.md download (spec global actions). */
+export function handleExportRunLog(services: OrchestratorServices, runId: string): Response {
+  try {
+    return markdownDownload(services.orchestrator.runLogMarkdown(runId), "run-log.md");
+  } catch (err) {
+    return errorResponse(err);
+  }
+}
+
 /** Provider configuration the dashboard sees — never the key itself. */
 export interface ProviderInfoBody {
   provider: ProviderKind;
