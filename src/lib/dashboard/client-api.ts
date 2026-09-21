@@ -6,7 +6,7 @@
 
 import type { ProviderInfoBody } from "@/lib/orchestrator/api";
 import type { RunSnapshot } from "@/lib/orchestrator/orchestrator";
-import type { PreflightEstimate, RunConfigDraft } from "./types";
+import type { PreflightEstimate, RunConfigDraft, StageDetailData } from "./types";
 
 export interface RunListItem {
   id: string;
@@ -42,6 +42,12 @@ export async function fetchLatestRun(): Promise<RunListItem | null> {
 /** GET /api/runs/:id — full snapshot (config, stages, totals). */
 export function fetchSnapshot(runId: string): Promise<RunSnapshot> {
   return requestJson<RunSnapshot>(`/api/runs/${runId}`);
+}
+
+/** GET /api/runs/:id/stages/:stageId — the stage's full tab history. */
+export async function fetchStageDetail(runId: string, stageId: string): Promise<StageDetailData> {
+  const body = await requestJson<{ detail: StageDetailData }>(`/api/runs/${runId}/stages/${stageId}`);
+  return body.detail;
 }
 
 /** POST /api/estimate — pre-flight volume estimate; never creates a run or touches a provider. */

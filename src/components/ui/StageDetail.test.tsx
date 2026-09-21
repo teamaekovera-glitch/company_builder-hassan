@@ -37,10 +37,15 @@ describe("StageDetailPanel", () => {
     expect(onTabChange).toHaveBeenCalledWith("merged");
   });
 
-  it("renders judge scores with dimension breakdowns on the scores tab", () => {
+  it("renders judge scores with dimension breakdowns on the scores tab", async () => {
     renderPanel("scores");
-    expect(screen.getByTestId("score-judge-1")).toHaveTextContent("overall 9.2");
-    expect(screen.getByTestId("score-judge-2")).toHaveTextContent("Accuracy 9.1");
+    // Defaults to the winning iteration and labels it in the round picker.
+    expect(screen.getByTestId("round-winner-2")).toBeInTheDocument();
+    expect(screen.getByTestId("score-judge-harsh")).toHaveTextContent("Accuracy 9.1");
+    expect(screen.getByTestId("reconciler-rationale")).toHaveTextContent("reconciled 9.2");
+    await userEvent.click(screen.getByTestId("round-1"));
+    expect(screen.getByTestId("score-judge-harsh")).toHaveTextContent("Accuracy 8.4");
+    expect(screen.getByTestId("reconciler-rationale")).toHaveTextContent("reconciled 8.6");
   });
 
   it("switches translation sub-tabs per language", async () => {
@@ -60,7 +65,7 @@ describe("StageDetailPanel", () => {
 
   it("lists loop history with attempts and token counts", () => {
     renderPanel("loop-history");
-    expect(screen.getByTestId("loop-history-table")).toHaveTextContent("critic:1");
+    expect(screen.getByTestId("loop-history-table")).toHaveTextContent("critic:pessimistic-vc");
     expect(screen.getByTestId("loop-history-table")).toHaveTextContent("14.2k");
   });
 });

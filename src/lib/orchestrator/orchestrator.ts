@@ -27,9 +27,10 @@ import type { StageNode } from "../pipeline/graph/stages";
 import { LANGUAGES, type Language } from "../pipeline/graph/plan";
 import type { RunRow, RunStatus, RunTotals, StageStatusRow } from "../store/schema";
 import { newId, type RunStore } from "../store/store";
-import type { PreflightEstimate } from "../dashboard/types";
+import type { PreflightEstimate, StageDetailData } from "../dashboard/types";
 import { costFromTokens, estimateRun } from "./estimate";
 import { synthesizeReplayEvents, type PublishableEvent } from "./events";
+import { buildStageDetail } from "./stage-detail";
 
 /** Strategy angles for alternative-company runs (spec RunConfig). */
 export const STRATEGY_ANGLES = ["bootstrapped", "vc-scale", "enterprise-first"] as const;
@@ -230,6 +231,14 @@ export class Orchestrator {
       totals: { ...totals, costUsd: costFromTokens(totals) },
       stages: this.store.listStageStatus(runId),
     };
+  }
+
+  /**
+   * Full tab history for one stage over real store rows, or undefined when
+   * the run or the stage id is unknown.
+   */
+  stageDetail(runId: string, stageId: string): StageDetailData | undefined {
+    return buildStageDetail(this.store, runId, stageId);
   }
 
   /**

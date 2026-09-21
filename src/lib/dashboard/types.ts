@@ -78,17 +78,6 @@ export interface RunMetrics {
   tokensPerSec: number;
 }
 
-export interface ScoreDimension {
-  label: string;
-  score: number;
-}
-
-export interface JudgeScore {
-  judge: string;
-  dimensions: ScoreDimension[];
-  overall: number;
-}
-
 export interface LoopHistoryEntry {
   loop: number;
   role: string;
@@ -97,17 +86,72 @@ export interface LoopHistoryEntry {
   ms: number;
 }
 
-/** Full stage history behind the detail tabs. */
+/** Native labels for the five languages — shared by the config screen, the stage-detail builder, and exports. */
+export const LANGUAGE_LABELS: Record<Language, { label: string; nativeLabel: string }> = {
+  en: { label: "English", nativeLabel: "English" },
+  es: { label: "Spanish", nativeLabel: "Español" },
+  de: { label: "German", nativeLabel: "Deutsch" },
+  ja: { label: "Japanese", nativeLabel: "日本語" },
+  hi: { label: "Hindi", nativeLabel: "हिन्दी" },
+};
+
+/** Operator-facing label for a language code. */
+export function languageLabel(code: Language): string {
+  return LANGUAGE_LABELS[code]?.label ?? code;
+}
+
+/**
+ * One critic's verbatim artifact for one loop iteration. `role` is the
+ * canonical role string (artifact kind prefix); `critic` is the operator-facing
+ * label ("Critic 1 — pessimistic-vc").
+ */
+export interface CritiqueEntry {
+  critic: string;
+  role: string;
+  round: number;
+  text: string;
+}
+
+/** One improver output for one loop iteration; `winning` marks the deliverable. */
+export interface ImprovedEntry {
+  round: number;
+  text: string;
+  /** Reconciled score of this round's judging, when recorded. */
+  score: number | null;
+  winning: boolean;
+}
+
+/** One judge's verbatim round response — quoted exactly, never re-parsed. */
+export interface JudgeEntry {
+  judge: string;
+  role: string;
+  text: string;
+}
+
+/** The full scoring picture of one loop iteration. */
+export interface ScoreRoundEntry {
+  round: number;
+  judges: JudgeEntry[];
+  /** The reconciler's parsed final score for this round. */
+  reconciled: number | null;
+  /** The reconciler's verbatim rationale. */
+  reconcilerRationale: string | null;
+}
+
+/** Full stage history behind the detail tabs, over real store rows. */
 export interface StageDetailData {
   stageId: string;
   title: string;
   status: StageStatus;
+  /** Executed critique rounds (0 for pass stages and stages not yet started). */
+  rounds: number;
+  /** Iteration whose improved artifact is the deliverable; null when none. */
+  winningRound: number | null;
   drafts: { generator: string; text: string }[];
   merged: string;
-  critiques: { critic: string; text: string }[];
-  improved: string;
-  scores: JudgeScore[];
-  reconciledScore: number | null;
+  critiques: CritiqueEntry[];
+  improved: ImprovedEntry[];
+  scoreRounds: ScoreRoundEntry[];
   translations: { code: Language; label: string; text: string }[];
   /** Single-file HTML mockup — rendered in a sandboxed iframe, never injected. */
   mockupHtml: string | null;

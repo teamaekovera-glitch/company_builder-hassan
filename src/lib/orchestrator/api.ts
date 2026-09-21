@@ -97,6 +97,15 @@ export function handleGetRun(services: OrchestratorServices, runId: string): Res
   return snapshot ? json(200, snapshot) : errorResponse(new RunNotFoundError(runId));
 }
 
+/** GET /api/runs/:id/stages/:stageId — full stage history for the detail tabs. */
+export function handleGetStageDetail(services: OrchestratorServices, runId: string, stageId: string): Response {
+  if (!services.orchestrator.getSnapshot(runId)) return errorResponse(new RunNotFoundError(runId));
+  const detail = services.orchestrator.stageDetail(runId, stageId);
+  return detail
+    ? json(200, { detail })
+    : json(404, { error: `stage ${stageId} not found in run ${runId}` });
+}
+
 /** POST /api/runs/:id/confirm — the explicit gate before any provider spend. */
 export function handleConfirmRun(services: OrchestratorServices, runId: string): Response {
   try {

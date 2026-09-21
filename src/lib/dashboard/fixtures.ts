@@ -2,9 +2,9 @@
 // Mirrors the spec's wave map (5 build waves + later passes collapsed into a
 // "Passes 27–39" column) and every consequential state a card can show.
 
+import { LANGUAGE_LABELS, type LanguageOption } from "./types";
 import type {
   DepthOption,
-  LanguageOption,
   PreflightEstimate,
   RunConfigDraft,
   RunMetrics,
@@ -19,13 +19,9 @@ export const DEPTH_OPTIONS: DepthOption[] = [
   { value: "extreme", label: "Extreme", description: "Full brief verbatim, 3 critique loops", loopCap: 3 },
 ];
 
-export const LANGUAGE_OPTIONS: LanguageOption[] = [
-  { code: "en", label: "English", nativeLabel: "English" },
-  { code: "es", label: "Spanish", nativeLabel: "Español" },
-  { code: "de", label: "German", nativeLabel: "Deutsch" },
-  { code: "ja", label: "Japanese", nativeLabel: "日本語" },
-  { code: "hi", label: "Hindi", nativeLabel: "हिन्दी" },
-];
+export const LANGUAGE_OPTIONS: LanguageOption[] = (
+  Object.entries(LANGUAGE_LABELS) as [keyof typeof LANGUAGE_LABELS, { label: string; nativeLabel: string }][]
+).map(([code, labels]) => ({ code, label: labels.label, nativeLabel: labels.nativeLabel }));
 
 export const DEFAULT_CONFIG: RunConfigDraft = {
   idea: "",
@@ -218,12 +214,14 @@ export function buildRunMetrics(overrides: Partial<RunMetrics> = {}): RunMetrics
   };
 }
 
-/** A completed stage whose full history feeds the detail tabs. */
+/** A completed stage whose full history feeds the detail tabs (two rounds; round 2 wins). */
 export function buildStageDetail(): StageDetailData {
   return {
     stageId: "market-analysis",
     title: "Market Analysis",
     status: "done",
+    rounds: 2,
+    winningRound: 2,
     drafts: [
       { generator: "Generator A", text: "Draft A — TAM/SAM/SOM by region with five-year forecast…" },
       { generator: "Generator B", text: "Draft B — bottom-up demand model anchored on 15 data-backed insights…" },
@@ -231,32 +229,39 @@ export function buildStageDetail(): StageDetailData {
     ],
     merged: "Merged draft — best of A, B, C reconciled into one narrative with citations…",
     critiques: [
-      { critic: "Critic 1", text: "Methodology: the five-year forecast lacks a stated CAGR source…" },
-      { critic: "Critic 2", text: "Evidence: three competitor claims are unsourced…" },
-      { critic: "Critic 3", text: "Structure: SOM section buries the regional split…" },
+      { critic: "Critic 1 — pessimistic-vc", role: "critic:pessimistic-vc", round: 1, text: "Methodology: the five-year forecast lacks a stated CAGR source…" },
+      { critic: "Critic 2 — enterprise-buyer", role: "critic:enterprise-buyer", round: 1, text: "Evidence: three competitor claims are unsourced…" },
+      { critic: "Critic 3 — senior-engineer", role: "critic:senior-engineer", round: 1, text: "Structure: SOM section buries the regional split…" },
+      { critic: "Critic 1 — pessimistic-vc", role: "critic:pessimistic-vc", round: 2, text: "CAGR now sourced; remaining concern is churn attribution…" },
+      { critic: "Critic 2 — enterprise-buyer", role: "critic:enterprise-buyer", round: 2, text: "Competitor claims cited; procurement blockers addressed…" },
+      { critic: "Critic 3 — senior-engineer", role: "critic:senior-engineer", round: 2, text: "Regional split is now explicit; data pipeline sound…" },
     ],
-    improved: "Improved draft — forecast re-sourced, competitor claims cited, SOM split by region…",
-    scores: [
+    improved: [
+      { round: 1, text: "Improved draft r1 — forecast re-sourced, SOM split by region…", score: 8.6, winning: false },
+      { round: 2, text: "Improved draft r2 — churn attribution fixed, citations complete…", score: 9.2, winning: true },
+    ],
+    scoreRounds: [
       {
-        judge: "Judge 1",
-        dimensions: [
-          { label: "Accuracy", score: 9.3 },
-          { label: "Depth", score: 9.0 },
-          { label: "Clarity", score: 9.4 },
+        round: 1,
+        judges: [
+          { judge: "Judge 1 — harsh", role: "judge:harsh", text: "Accuracy 8.4, Depth 8.8, Clarity 8.9 — forecast sourcing still thin…" },
+          { judge: "Judge 2 — balanced", role: "judge:balanced", text: "Accuracy 8.8, Depth 8.6, Clarity 8.7 — solid after round one…" },
+          { judge: "Judge 3 — generous", role: "judge:generous", text: "Accuracy 8.9, Depth 8.7, Clarity 8.8 — near the bar…" },
         ],
-        overall: 9.2,
+        reconciled: 8.6,
+        reconcilerRationale: "Reconciled 8.6: judges cluster at 8.7±0.2; demand-model depth keeps this below the 9.0 gate…",
       },
       {
-        judge: "Judge 2",
-        dimensions: [
-          { label: "Accuracy", score: 9.1 },
-          { label: "Depth", score: 9.2 },
-          { label: "Clarity", score: 9.3 },
+        round: 2,
+        judges: [
+          { judge: "Judge 1 — harsh", role: "judge:harsh", text: "Accuracy 9.1, Depth 9.0, Clarity 9.2 — citations complete…" },
+          { judge: "Judge 2 — balanced", role: "judge:balanced", text: "Accuracy 9.2, Depth 9.1, Clarity 9.2 — clears every dimension…" },
+          { judge: "Judge 3 — generous", role: "judge:generous", text: "Accuracy 9.3, Depth 9.2, Clarity 9.3 — publication ready…" },
         ],
-        overall: 9.2,
+        reconciled: 9.2,
+        reconcilerRationale: "Reconciled 9.2: all three judges at or above 9.1; the gate is cleared with sourcing complete…",
       },
     ],
-    reconciledScore: 9.2,
     translations: [
       { code: "es", label: "Spanish", text: "Análisis de mercado — TAM/SAM/SOM por región…" },
       { code: "de", label: "German", text: "Marktanalyse — TAM/SAM/SOM nach Region…" },
@@ -265,14 +270,14 @@ export function buildStageDetail(): StageDetailData {
     ],
     mockupHtml: "<main><h1>Market Analysis mockup</h1><p>Single-file HTML rendered sandboxed.</p></main>",
     loopHistory: [
-      { loop: 1, role: "generator:A", attempts: 1, tokens: 14_200, ms: 41_000 },
-      { loop: 1, role: "generator:B", attempts: 1, tokens: 13_800, ms: 39_500 },
-      { loop: 1, role: "generator:C", attempts: 1, tokens: 14_050, ms: 40_200 },
-      { loop: 1, role: "merger", attempts: 1, tokens: 18_600, ms: 33_000 },
-      { loop: 1, role: "critic:1", attempts: 2, tokens: 9_400, ms: 21_000 },
+      { loop: 0, role: "gen-a", attempts: 1, tokens: 14_200, ms: 41_000 },
+      { loop: 0, role: "gen-b", attempts: 1, tokens: 13_800, ms: 39_500 },
+      { loop: 0, role: "gen-c", attempts: 1, tokens: 14_050, ms: 40_200 },
+      { loop: 0, role: "merger", attempts: 1, tokens: 18_600, ms: 33_000 },
+      { loop: 1, role: "critic:pessimistic-vc", attempts: 2, tokens: 9_400, ms: 21_000 },
       { loop: 1, role: "improver", attempts: 1, tokens: 21_300, ms: 47_000 },
-      { loop: 1, role: "judge:1", attempts: 1, tokens: 6_100, ms: 12_000 },
-      { loop: 1, role: "judge:2", attempts: 1, tokens: 6_050, ms: 12_300 },
+      { loop: 1, role: "judge:harsh", attempts: 1, tokens: 6_100, ms: 12_000 },
+      { loop: 1, role: "judge:balanced", attempts: 1, tokens: 6_050, ms: 12_300 },
       { loop: 1, role: "reconciler", attempts: 1, tokens: 4_200, ms: 9_000 },
       { loop: 2, role: "reconciler", attempts: 1, tokens: 4_180, ms: 8_700 },
     ],
