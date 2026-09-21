@@ -14,10 +14,13 @@
  */
 
 import { createAdapterFromEnv } from "../llm/factory";
-import type { LLMAdapter } from "../llm/types";
+import type { CompletionRequest, LLMAdapter } from "../llm/types";
 import {
   DEFAULT_RUN_CONFIG,
   DEFAULT_SCORE_THRESHOLD,
+  WINNING_ARTIFACT_KIND,
+  buildSystemPrompt,
+  composePersistedPrompt,
   runPipeline,
   type PipelineRunResult,
   type RunConfig,
@@ -35,6 +38,20 @@ import { buildStageDetail } from "./stage-detail";
 /** Strategy angles for alternative-company runs (spec RunConfig). */
 export const STRATEGY_ANGLES = ["bootstrapped", "vc-scale", "enterprise-first"] as const;
 export type StrategyAngle = (typeof STRATEGY_ANGLES)[number];
+
+/** Spec: the stricter re-run raises the gate from 9.0 to 9.5 in a fresh run. */
+export const STRICTER_SCORE_THRESHOLD = 9.5;
+
+/** stageId/role under which the 3-alternatives comparison call is recorded. */
+export const COMPARISON_STAGE_ID = "alternatives-comparison";
+export const COMPARISON_ROLE = "comparison";
+
+/** Result of the single alternatives comparison call. */
+export interface ComparisonResult {
+  stageId: string;
+  /** The comparison response, verbatim. */
+  comparison: string;
+}
 
 /** Max length of the operator's one-line idea. */
 export const MAX_IDEA_LENGTH = 2_000;
@@ -239,6 +256,126 @@ export class Orchestrator {
    */
   stageDetail(runId: string, stageId: string): StageDetailData | undefined {
     return buildStageDetail(this.store, runId, stageId);
+  }
+
+  /**
+   * Rerun with a stricter gate (spec global actions): a fresh full pipeline
+   * at threshold 9.5 with the source's idea and remaining config. The source
+   * run and its artifacts are never touched.
+   */
+  rerunStricter(sourceRunId: string): CreatedRun {
+    const source = this.requireRun(sourceRunId);
+    const config = JSON.parse(source.config_json) as RunConfig;
+    return this.createRun({
+      idea: source.idea,
+      depth: config.depth,
+      languages: config.languages,
+      scoreThreshold: STRICTER_SCORE_THRESHOLD,
+      ...(config.strategyAngle ? { strategyAngle: config.strategyAngle } : {}),
+    });
+  }
+
+  /**
+   * 3-alternatives mode (spec global actions): three fresh full pipelines,
+   * one per strategy angle, injected into every prompt. Comparison is a
+   * separate explicit act once all three complete — see compareAlternatives.
+   */
+  rerunAlternatives(sourceRunId: string): CreatedRun[] {
+    const source = this.requireRun(sourceRunId);
+    const config = JSON.parse(source.config_json) as RunConfig;
+    return STRATEGY_ANGLES.map((angle) =>
+      this.createRun({
+        idea: source.idea,
+        depth: config.depth,
+        languages: config.languages,
+        scoreThreshold: config.scoreThreshold,
+        strategyAngle: angle,
+      }),
+    );
+  }
+
+  /**
+   * The one comparison call of 3-alternatives mode: after every member run
+   * completed, a single call across the three dossiers. Recorded verbatim on
+   * the source run under the alternatives-comparison stage (additive rows —
+   * no run or artifact is overwritten), so it shows up in the run log and
+   * the run's stage detail like any other call.
+   */
+  async compareAlternatives(sourceRunId: string, memberRunIds: readonly string[]): Promise<ComparisonResult> {
+    this.requireRun(sourceRunId);
+    const notCompleted = memberRunIds
+      .map((id) => this.store.getRun(id))
+      .filter((run) => !run || run.status !== "completed");
+    if (notCompleted.length > 0) {
+      const ids = notCompleted.map((run) => run?.id ?? "unknown").join(", ");
+      throw new RunNotQueuedError(`alternatives comparison needs every member run completed — not completed: ${ids}`);
+    }
+
+    // One section per member: the angle plus every improved artifact it produced.
+    const sections = memberRunIds.map((id) => {
+      const run = this.store.getRun(id);
+      const config = JSON.parse(run?.config_json ?? "{}") as RunConfig;
+      const improved = this.store
+        .listRunArtifacts(id)
+        .filter((row) => row.kind === WINNING_ARTIFACT_KIND)
+        .map((row) => `### ${row.stage_id}\n\n${row.text}`)
+        .join("\n\n");
+      return `# Alternative — ${config.strategyAngle ?? id}\n\n${improved}`;
+    });
+    const user = [
+      "Three alternative companies were generated for the same idea, each under a strategy angle injected into every prompt.",
+      "Compare the three dossiers and recommend one direction: positioning, differentiation, riskiest assumption, and first hire.",
+      "",
+      ...sections,
+    ].join("\n");
+    const req: CompletionRequest = { system: buildSystemPrompt(COMPARISON_ROLE), user };
+    const prompt = composePersistedPrompt(req);
+
+    const adapter = this.adapterFactory();
+    const started = Date.now();
+    try {
+      const result = await adapter.complete(req);
+      this.store.recordCall({
+        id: newId(),
+        runId: sourceRunId,
+        stageId: COMPARISON_STAGE_ID,
+        role: COMPARISON_ROLE,
+        loop: 0,
+        attempt: 1,
+        prompt,
+        response: result.text,
+        error: null,
+        inputTokens: result.inputTokens,
+        outputTokens: result.outputTokens,
+        ms: Date.now() - started,
+      });
+      this.store.putArtifact({
+        runId: sourceRunId,
+        stageId: COMPARISON_STAGE_ID,
+        kind: COMPARISON_ROLE,
+        text: result.text,
+      });
+      return { stageId: COMPARISON_STAGE_ID, comparison: result.text };
+    } catch (err) {
+      // The failed comparison attempt is recorded verbatim (spec: nothing
+      // fails silently; the run log holds the failure), then rethrown — the
+      // operator sees the error and can retry the comparison.
+      this.store.recordCall({
+        id: newId(),
+        runId: sourceRunId,
+        stageId: COMPARISON_STAGE_ID,
+        role: COMPARISON_ROLE,
+        loop: 0,
+        attempt: 1,
+        prompt,
+        response: null,
+        error: err instanceof Error ? err.message : String(err),
+        inputTokens: null,
+        outputTokens: null,
+        ms: Date.now() - started,
+      });
+      throw err;
+    }
   }
 
   /**

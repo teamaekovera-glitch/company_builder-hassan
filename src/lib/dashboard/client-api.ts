@@ -74,3 +74,40 @@ export async function createRun(config: RunConfigDraft): Promise<string> {
 export function confirmRun(runId: string): Promise<unknown> {
   return requestJson(`/api/runs/${runId}/confirm`, { method: "POST" });
 }
+
+/** Created-run summary returned by the rerun endpoints. */
+export interface RerunCreated {
+  runId: string;
+  estimate: PreflightEstimate;
+}
+
+/** POST /api/runs/:id/rerun-stricter — fresh queued run at the 9.5 gate; source untouched. */
+export async function rerunStricter(runId: string): Promise<RerunCreated> {
+  const body = await requestJson<{ run: RerunCreated }>(`/api/runs/${runId}/rerun-stricter`, { method: "POST" });
+  return body.run;
+}
+
+/** POST /api/runs/:id/rerun-alternatives — three fresh queued runs, one per strategy angle. */
+export async function rerunAlternatives(runId: string): Promise<RerunCreated[]> {
+  const body = await requestJson<{ runs: RerunCreated[] }>(`/api/runs/${runId}/rerun-alternatives`, { method: "POST" });
+  return body.runs;
+}
+
+/** POST /api/runs/:id/compare-alternatives — fires the single comparison call; 202 when started. */
+export function compareAlternatives(runId: string, memberRunIds: string[]): Promise<unknown> {
+  return requestJson(`/api/runs/${runId}/compare-alternatives`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ memberRunIds }),
+  });
+}
+
+/** URL of the dossier.md download (GET; the browser saves it as a file). */
+export function dossierUrl(runId: string): string {
+  return `/api/runs/${runId}/export/dossier`;
+}
+
+/** URL of the run-log.md download (GET; the browser saves it as a file). */
+export function runLogUrl(runId: string): string {
+  return `/api/runs/${runId}/export/run-log`;
+}

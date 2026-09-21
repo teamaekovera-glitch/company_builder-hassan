@@ -18,6 +18,7 @@ import { resolveProviderKind, type LLMEnvConfig, type ProviderKind } from "../ll
 import { isTerminalRunStatus, type OrchestratorEvent } from "./events";
 import { SSEHub } from "./hub";
 import {
+  COMPARISON_STAGE_ID,
   Orchestrator,
   RunNotFoundError,
   RunNotQueuedError,
@@ -117,6 +118,48 @@ export function handleConfirmRun(services: OrchestratorServices, runId: string):
       console.error(`[orchestrator] run ${runId} aborted by invariant break:`, err);
     });
     return json(202, { runId, status: "running", started: true });
+  } catch (err) {
+    return errorResponse(err);
+  }
+}
+
+/** POST /api/runs/:id/rerun-stricter — fresh queued run at the 9.5 gate; source untouched. */
+export function handleRerunStricter(services: OrchestratorServices, runId: string): Response {
+  try {
+    return json(201, { run: services.orchestrator.rerunStricter(runId) });
+  } catch (err) {
+    return errorResponse(err);
+  }
+}
+
+/** POST /api/runs/:id/rerun-alternatives — three fresh queued runs, one per strategy angle. */
+export function handleRerunAlternatives(services: OrchestratorServices, runId: string): Response {
+  try {
+    return json(201, { runs: services.orchestrator.rerunAlternatives(runId) });
+  } catch (err) {
+    return errorResponse(err);
+  }
+}
+
+/** POST /api/runs/:id/compare-alternatives — body { memberRunIds: string[] }; one comparison call. */
+export function handleCompareAlternatives(services: OrchestratorServices, runId: string, raw: unknown): Response {
+  const memberRunIds: unknown = (raw as { memberRunIds?: unknown } | null)?.memberRunIds;
+  if (
+    !Array.isArray(memberRunIds) ||
+    memberRunIds.length === 0 ||
+    !memberRunIds.every((id) => typeof id === "string" && id.length > 0)
+  ) {
+    return json(400, { error: "body must be { memberRunIds: string[] } — the three alternatives run ids" });
+  }
+  try {
+    const done = services.orchestrator.compareAlternatives(runId, memberRunIds as string[]);
+    // Fire-and-forget like confirmRun: one provider call that can take a
+    // minute; the comparison surfaces in the run log and stage detail when it
+    // lands. Failures are recorded verbatim by the orchestrator.
+    void done.catch((err: unknown) => {
+      console.error(`[orchestrator] alternatives comparison for ${runId} failed:`, err);
+    });
+    return json(202, { runId, stageId: COMPARISON_STAGE_ID, started: true });
   } catch (err) {
     return errorResponse(err);
   }
