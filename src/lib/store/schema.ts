@@ -80,6 +80,28 @@ export interface CallMetaRow {
   error: string | null;
 }
 
+/**
+ * Per-call metadata for the verbatim run-log stream — everything the streamed
+ * call sections render EXCEPT the prompt/response text, plus the text lengths
+ * (SQLite `length()` counts Unicode code points) that bound the chunked reads.
+ * Never materializes a multi-MB TEXT column.
+ */
+export interface CallVerbatimMetaRow {
+  id: string;
+  run_id: string;
+  stage_id: string;
+  role: CallRole;
+  loop: number;
+  attempt: number;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  ms: number | null;
+  error: string | null;
+  promptChars: number;
+  hasResponse: 0 | 1;
+  responseChars: number;
+}
+
 /** Row shape of the stage_artifacts table — latest artifact per (run, stage, kind, language). */
 export interface StageArtifactRow {
   run_id: string;

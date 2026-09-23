@@ -21,6 +21,7 @@ import {
   SCHEMA_SQL,
   type CallMetaRow,
   type CallRow,
+  type CallVerbatimMetaRow,
   type RunRow,
   type RunStatus,
   type RunTotals,
@@ -114,6 +115,9 @@ export class RunStore {
   private readonly countRunCallsStmt: Database.Statement<[string], { n: number }>;
 
   private readonly selectRunCallMeta: Database.Statement<[string], CallMetaRow>;
+  private readonly selectRunCallVerbatimMeta: Database.Statement<[string], CallVerbatimMetaRow>;
+  private readonly selectCallPromptChunk: Database.Statement<[number, number, string], { chunk: string }>;
+  private readonly selectCallResponseChunk: Database.Statement<[number, number, string], { chunk: string }>;
 
   private readonly upsertArtifact: Database.Statement<[StageArtifactRow], unknown>;
   private readonly selectArtifact: Database.Statement<
@@ -187,6 +191,20 @@ export class RunStore {
              response IS NOT NULL AS ok, input_tokens, output_tokens, ms, error
       FROM calls WHERE run_id = ? ORDER BY rowid
     `);
+    this.selectRunCallVerbatimMeta = this.db.prepare<[string], CallVerbatimMetaRow>(`
+      SELECT id, run_id, stage_id, role, loop, attempt,
+             input_tokens, output_tokens, ms, error,
+             length(prompt) AS promptChars,
+             response IS NOT NULL AS hasResponse,
+             COALESCE(length(response), 0) AS responseChars
+      FROM calls WHERE run_id = ? ORDER BY rowid
+    `);
+    this.selectCallPromptChunk = this.db.prepare<[number, number, string], { chunk: string }>(
+      "SELECT substr(prompt, ?, ?) AS chunk FROM calls WHERE id = ?",
+    );
+    this.selectCallResponseChunk = this.db.prepare<[number, number, string], { chunk: string }>(
+      "SELECT substr(response, ?, ?) AS chunk FROM calls WHERE id = ?",
+    );
 
     this.upsertArtifact = this.db.prepare<[StageArtifactRow], unknown>(`
       INSERT INTO stage_artifacts (run_id, stage_id, kind, language, text, score)
@@ -301,6 +319,32 @@ export class RunStore {
    */
   iterateRunCalls(runId: string): IterableIterator<CallMetaRow> {
     return this.selectRunCallMeta.iterate(runId);
+  }
+
+  /**
+   * Verbatim run-log metadata as a lazy cursor — every column the streamed
+   * call sections render EXCEPT the prompt/response text itself. Streaming
+   * exports must never select a multi-MB TEXT column whole: better-sqlite3
+   * hands each TEXT value to V8 as an external string the GC will not reclaim
+   * under pressure, which OOM-kills workers on multi-GB call histories.
+   */
+  iterateRunCallVerbatimMeta(runId: string): IterableIterator<CallVerbatimMetaRow> {
+    return this.selectRunCallVerbatimMeta.iterate(runId);
+  }
+
+  /**
+   * One bounded chunk of a call's verbatim prompt. SQLite `substr` counts
+   * Unicode code points and never splits a surrogate pair, so concatenating
+   * chunks from 1..promptChars+1 reproduces the stored text byte-exactly —
+   * without ever materializing the whole multi-MB value.
+   */
+  getCallPromptChunk(callId: string, startChar: number, chars: number): string {
+    return this.selectCallPromptChunk.get(startChar, chars, callId)?.chunk ?? "";
+  }
+
+  /** One bounded chunk of a call's verbatim response (same contract as {@link getCallPromptChunk}). */
+  getCallResponseChunk(callId: string, startChar: number, chars: number): string {
+    return this.selectCallResponseChunk.get(startChar, chars, callId)?.chunk ?? "";
   }
 
   /** Creates the stage row if absent, then applies a partial progress patch. */

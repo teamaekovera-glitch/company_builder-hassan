@@ -12,7 +12,7 @@ const RUN = "r-threading";
 const store = new RunStore(":memory:");
 store.createRun({ id: RUN, idea: IDEA, config: { scoreThreshold: 9.0 } });
 
-const adapter = createScriptedAdapter({ scores: [8.0, 9.5] });
+const adapter = createScriptedAdapter({ scores: [8.0, 9.5], retainPrompts: true });
 
 const result = await runLoopStage({
   runId: RUN,

@@ -28,6 +28,12 @@ export const MOCK_BODY_WORD_COUNT = 2_100;
 /** Reconciler role — the only role whose response carries the score marker. */
 const RECONCILER_ROLE = "reconciler";
 
+/** Pair-audit role — responses carry the contradiction lines the executor parses. */
+const AUDIT_PAIR_ROLE = "audit-pair";
+
+/** Localisation QA role — responses end with the pass/fail verdict marker. */
+const LOCALISATION_QA_ROLE = "localisation-qa";
+
 // FNV-1a 32-bit — same digest scheme as mock.ts, kept local so the llm layer
 // stays dependency-free of the executor.
 function fnv1a(text: string): string {
@@ -76,7 +82,18 @@ export function mockProviderBody(req: CompletionRequest): string {
     words.join(" "),
     ASSUMPTIONS_SECTION,
   ];
-  if (role === RECONCILER_ROLE) lines.push(`RECONCILED_SCORE: ${MOCK_RECONCILED_SCORE}`);
+  // The executor parses markers off specific roles — including executor-
+  // prefixed forms (`rerun:<stage>:reconciler`, `recheck:<pass>:audit-pair`)
+  // recorded during the auto re-run pass.
+  if (role === RECONCILER_ROLE || role?.endsWith(`:${RECONCILER_ROLE}`)) {
+    lines.push(`RECONCILED_SCORE: ${MOCK_RECONCILED_SCORE}`);
+  }
+  if (role === AUDIT_PAIR_ROLE || role?.endsWith(`:${AUDIT_PAIR_ROLE}`)) {
+    lines.push(`CONTRADICTION: C-1 — the pair artifacts disagree on one load-bearing number (digest ${digest})`);
+  }
+  if (role === LOCALISATION_QA_ROLE || role?.endsWith(`:${LOCALISATION_QA_ROLE}`)) {
+    lines.push(`LOCALISATION_QA_VERDICT: pass`);
+  }
   return lines.join("\n\n");
 }
 
