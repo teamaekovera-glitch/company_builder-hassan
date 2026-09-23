@@ -1,0 +1,73 @@
+# GLOSSARY — AURELITH (running)
+
+The running master glossary. Terms are one line each. This file, in full, is appended to every published entry.
+
+- **Aerostat** — lighter-than-air vessel; first flown 1109 AR by Captain Peregrine Vale; now the backbone of continental freight.
+- **Arc battery** — veinstone engine that converts Veil into motive power; tended by trimmers; first lit at Hearth Delve, 1121.
+- **AR** — Aurelith Reckoning, counted from the Veilfall (Year 0).
+- **Aurelith** — the continent, named in 260 for Aurelith the Navigator (198–241).
+- **Aurelith the Navigator** — cartographer who surveyed the Marrow Sea (219–233).
+- **Bell Tithe** — the Sanaveri levy on Maravand's relic-bells; its refusal began the Long Quarrel (655).
+- **BellFoundry method** — Sanavere acoustic engineering; bells used for signaling, medicine, and peace.
+- **Blank Page, the** — Umbral faith: the sacred is what cannot be written.
+- **Caer Luth** — assembly site of the Ashling clans.
+- **Caldrin** — language of Caldrith.
+- **Caldrith** — maritime kingdom of the western capes; capital Solvenna.
+- **Charter of Calms** — maritime truce of 412 opening the Lantern Centuries.
+- **Charter of Still Fires** — 1071 treaty ending the Friction Wars.
+- **Corm** — the copper second moon, shattered in Year 0.
+- **Council of Ten** — governing council of the canal republic of Liorne (not to be confused with the Merchant Tables).
+- **dark conjunction** — announced by the Long Count for Firstfrost 1147: Liral crossing the Veil-arc.
+- **Drathic** — language of the storm isles (minor).
+- **First Law of Veilwork** — nothing is borrowed, only traded.
+- **grain futures** — forward contracts on the Liorne Exchange since 874.
+- **hearth-vote** — the Freeholds' assembly vote of every hall member.
+- **heliograph web** — continental signal-tower network, completed 1098.
+- **Hushed Ocean** — the eastern and northern sea.
+- **Iron Regency** — Vessany's industrial autocracy, 1011–1061.
+- **Iron Sermon, the** — Freehold labor-faith: every tool a relic, strike-prayer.
+- **Kettledeep Ridges** — the mining highlands under which the Freeholds sit.
+- **Kurultai** — the Zharkun governing assembly.
+- **Liral** — the slow white moon.
+- **Ledger of Deeds** — faith of Liorne and Caldrith: every deed an entry, confession an audit.
+- **Ledger Peace** — era 831–980 of Liorne banking hegemony.
+- **Liorne** — canal republic; the city is the state.
+- **Long Count, the** — the Umbral calendar observatory at Vigil.
+- **Long Quarrel, the** — wars of the Ledger and the Tide, 655–831.
+- **Marrow Sea** — western and southern sea of Aurelith.
+- **Merchant Tables** — Caldrith's chartered federated trade authority (203).
+- **Mira of the Nine Wells** (689–762) — Maravandi water-law philosopher.
+- **Maw of Grief, the** — sea-strait where Ragnvald Ashsmouth burned his fleet, 796.
+- **Nine Banners of Tsek** — examination empire of the eastern river plains.
+- **Oath-ledger** — Ashling record of honor-debt, kept by weighers.
+- **pale fade, the** — progressive memory-loss from overdrawn Veilwork; ends in identity death.
+- **Pearl Fleet** — Sarhadd's monsoon merchant navy.
+- **Pinemarrow** — the Vessany boreal forest.
+- **Qanat** — Maravand underground water channel; the civic art of the basin.
+- **Quiet Assay, the** — Ashling philosophy: words have weight, speech is spending.
+- **Rate War, the** — the Aerostat Cartel's freight war against the Freeholds (1145–).
+- **Raining Years** — the decade of falling Corm shards after Year 0.
+- **Shard Rush, the** — vein-claim race across the north, from 1143.
+- **Silent Age** — era before Year 0; oral memory only.
+- **Stewards' Council** — Vessany's council of principals, first convened 601.
+- **Stormglass** — Drathic weather-glass that remembers storm-paths.
+- **Stormsaints, the** — Drathmark faith of the Storm-Father and nine saints.
+- **Syndical hall** — worker-owned Freehold charter under the hearth-vote.
+- **Table Rights** — Caldrith's constitutional settlement of 1012.
+- **thousand Hearths, the** — hearth-god faith of the Vessany–Tsek borderlands.
+- **Tide-That-Remembers** — Sanaveri faith: the dead return on the tide.
+- **tide-sworn** — old guild term for Veil-workers.
+- **trimmer** — battery-hall worker paid in wages and compensating memories.
+- **Tseki** — language of Tsek; three registers (plain, formal, memorial).
+- **Veil, the** — the glow of shattered Corm, ringed around the world.
+- **Veil Days** — five intercalary days of remembrance after Wolfmoon.
+- **Veilfall, the** — the shattering of Corm, Year 0.
+- **Veilwork** — magic of drawing from the Veil, priced in memories.
+- **vein** — a seam of loose light in the crust, residue of Corm.
+- **veinstone** — crystallized vein-matter; the industrial substrate of the Emberspring.
+- **weigher of words** — Ashling bard-arbiter.
+- **Vessanic** — language of Vessany.
+- **Water Code** — Maravand's water law, adopted 771.
+- **water-share** — Maravand's lawful currency: a right to channelled water.
+- **Yandu** — capital of Tsek.
+- **Zharkun Khanate** — steppe empire founded 88 by Khagan Burei.
