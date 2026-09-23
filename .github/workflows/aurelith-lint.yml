@@ -1,0 +1,88 @@
+# Aurelith Canon Lint — CI gates for the Aurelith Encyclopedia content tree.
+#
+# Gates (in job 'canon-lint'):
+#   1. Every published entry under aurelith/entries/*.md must be at least
+#      2,000 words (wc -w). The editorial floor is 2,300 words excluding
+#      New Canon / New Timeline blocks; CI enforces the looser 2,000-word
+#      whole-file bound so harvested appendices cannot push an entry under.
+#   2. Each locked spelling (Aurelith, Corm, Veilfall, Veilwork, Solvenna)
+#      must appear at least once somewhere under aurelith/ (case-insensitive
+#      grep -rqi; enforced once canon Markdown exists under aurelith/).
+#      Zero matches means the canon itself has been dropped.
+#   3. A per-file word-count table is printed for visibility on every run.
+#   4. Any Markdown file over 1MB fails the run (appendix reproduction grows
+#      entries monotonically; this catches runaway duplication early).
+
+name: Aurelith Canon Lint
+
+on:
+  push:
+    paths:
+      - 'aurelith/**'
+  pull_request:
+    paths:
+      - 'aurelith/**'
+
+jobs:
+  canon-lint:
+    name: Aurelith Canon Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Entry word counts, locked spellings, per-file table
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          fail=0
+
+          # Gate 1: entry word-count floor (2,000 words per entry file).
+          files=(aurelith/entries/*.md)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "aurelith/entries/ is empty — word-count gate skipped (no entries published yet)."
+          else
+            for f in "${files[@]}"; do
+              words=$(wc -w < "$f")
+              if [ "$words" -lt 2000 ]; then
+                echo "::error file=$f::Entry is $words words; minimum is 2000 (wc -w)."
+                fail=1
+              fi
+            done
+          fi
+
+          # Gate 2: locked spellings must each appear somewhere under aurelith/.
+          # Enforced only once canon Markdown exists under aurelith/ — a
+          # scripts-only tree (orchestration PR) carries no canon to check.
+          md_count=$(find aurelith -type f -name '*.md' | wc -l)
+          if [ "$md_count" -eq 0 ]; then
+            echo "No Markdown under aurelith/ yet — locked-spelling gate skipped."
+          else
+            for term in Aurelith Corm Veilfall Veilwork Solvenna; do
+              if ! grep -rqi "$term" aurelith/; then
+                echo "::error::Locked spelling \"$term\" has zero matches under aurelith/."
+                fail=1
+              fi
+            done
+          fi
+
+          # Gate 3 (report only): per-file word-count table.
+          echo
+          echo "Per-file word counts (wc -w):"
+          printf '%-50s %8s\n' 'FILE' 'WORDS'
+          while IFS= read -r -d '' f; do
+            printf '%-50s %8s\n' "$f" "$(wc -w < "$f")"
+          done < <(find aurelith -type f -name '*.md' -print0 | sort -z)
+
+          exit $fail
+
+      - name: Fail on Markdown files over 1MB
+        run: |
+          set -euo pipefail
+          big=$(find aurelith -type f -name '*.md' -size +1M || true)
+          if [ -n "$big" ]; then
+            echo "::error::Markdown files over 1MB found:"
+            echo "$big"
+            exit 1
+          fi
+          echo "All Markdown files are within the 1MB limit."
